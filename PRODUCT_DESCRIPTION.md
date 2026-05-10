@@ -117,6 +117,7 @@ Prices API is disabled due to RapidAPI quota constraints. The price adapter is p
 ├── RIFTBOUND_PRICES_API.md
 ├── package.json
 ├── tsconfig.json
+├── Dockerfile
 ├── src/
 │   ├── index.ts                    # Entry point, DI composition root
 │   ├── config.ts                   # Zod-validated environment variables
@@ -217,18 +218,20 @@ Free tier: 0.15 vCPU, 0.25 GB RAM, 0.3 GB disk, auto HTTPS, always-on.
 ### Steps
 
 1. **Create account** at https://justrunmy.app
-2. **Push code** to their GitHub integration or use their CLI
-3. **Set environment variables** in their dashboard:
-   - `TELEGRAM_BOT_TOKEN`
-   - `NODE_ENV=production`
-   - `WEBHOOK_URL=https://your-app.justrunmy.app`
+2. **Push code** via Git (Dockerfile included in repo):
+   ```bash
+   git push https://<username>:<password>@justrunmy.app/git/<repo> HEAD:deploy
+   ```
+3. **Configure** in their dashboard or via MCP tools:
+   - Set env vars: `TELEGRAM_BOT_TOKEN`, `NODE_ENV=production`, `WEBHOOK_URL=https://<app>.b.jrnm.app`, `PORT=8080`
+   - Map port 8080 to HTTPS with a subdomain (e.g., `riftbot`)
 4. **Set Telegram webhook**:
    ```bash
-   curl -F "url=https://your-app.justrunmy.app" \
+   curl -F "url=https://riftbot.b.jrnm.app" \
      https://api.telegram.org/bot<TOKEN>/setWebhook
    ```
 
-justrunmy.app auto-detects Node.js from `package.json`. No Dockerfile needed unless the platform specifically requires it.
+Dockerfile is required for Git push deployments. The platform auto-detects Node.js for Zip Upload deployments (no Dockerfile needed).
 
 ---
 

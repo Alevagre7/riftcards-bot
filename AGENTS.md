@@ -512,15 +512,20 @@ npm run dev
 ### justrunmy.app
 Free tier: 0.15 vCPU, 0.25 GB RAM, 0.3 GB disk, auto HTTPS.
 
-1. Push code to justrunmy.app (GitHub integration or CLI)
-2. Set environment variables in dashboard
+1. Push code via Git (Dockerfile included in repo):
+   ```bash
+   git push https://<user>:<pass>@justrunmy.app/git/<repo> HEAD:deploy
+   ```
+2. Configure via dashboard or MCP tools:
+   - Env vars: `TELEGRAM_BOT_TOKEN`, `NODE_ENV=production`, `WEBHOOK_URL`, `PORT=8080`
+   - Port: map 8080 to HTTPS with a subdomain
 3. Set Telegram webhook:
    ```bash
-   curl -F "url=https://your-app.justrunmy.app" \
+   curl -F "url=https://<app>.b.jrnm.app" \
      https://api.telegram.org/bot<TOKEN>/setWebhook
    ```
 
-justrunmy.app auto-detects Node.js from `package.json`.
+Zip Upload also supported (no Dockerfile required — platform auto-detects Node.js).
 
 ---
 
