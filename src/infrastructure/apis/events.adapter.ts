@@ -23,6 +23,7 @@ const EventsResponseSchema = z.object({
 
 interface EventsAdapterOptions {
   baseUrl: string;
+  proxyBaseUrl?: string;
   timeoutMs: number;
   retryAttempts: number;
   latitude: number;
@@ -32,6 +33,16 @@ interface EventsAdapterOptions {
 
 export class EventsAdapter implements IEventRepository {
   constructor(private options: EventsAdapterOptions) {}
+
+  private buildUrl(path: string, queryParams: URLSearchParams): string {
+    const url = new URL(path, this.options.baseUrl);
+    url.search = queryParams.toString();
+
+    if (this.options.proxyBaseUrl) {
+      return `${this.options.proxyBaseUrl}?url=${encodeURIComponent(url.toString())}`;
+    }
+    return url.toString();
+  }
 
   async getEvents(startAfter: Date, startBefore: Date): Promise<Event[]> {
     const params = new URLSearchParams();
@@ -49,7 +60,7 @@ export class EventsAdapter implements IEventRepository {
 
     try {
       const response = await fetchWithRetry(
-        `${this.options.baseUrl}/hydraproxy/api/v2/events/?${params.toString()}`,
+        this.buildUrl('/hydraproxy/api/v2/events/', params),
         {
           timeout: this.options.timeoutMs,
           retries: this.options.retryAttempts,

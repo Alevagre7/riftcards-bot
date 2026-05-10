@@ -22,6 +22,7 @@ async function main() {
 
   const cardRepository = new RiftcodexAdapter({
     baseUrl: 'https://api.riftcodex.com',
+    proxyBaseUrl: config.riftcodexProxyUrl ?? 'https://riftcards-bot-proxy.alevagre7.workers.dev',
     cache,
     timeoutMs: config.apiTimeoutMs,
     retryAttempts: config.apiRetryAttempts,
@@ -34,6 +35,7 @@ async function main() {
 
   const eventRepository = new EventsAdapter({
     baseUrl: 'https://api.cloudflare.riftbound.uvsgames.com',
+    proxyBaseUrl: config.riftcodexProxyUrl ?? 'https://riftcards-bot-proxy.alevagre7.workers.dev',
     timeoutMs: config.apiTimeoutMs,
     retryAttempts: config.apiRetryAttempts,
     latitude: 37.389092399999996,

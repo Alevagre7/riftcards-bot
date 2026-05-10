@@ -3,6 +3,7 @@ import { z } from 'zod';
 const configSchema = z.object({
   telegramBotToken: z.string().min(1, 'TELEGRAM_BOT_TOKEN is required'),
   rapidApiKey: z.string().optional(),
+  riftcodexProxyUrl: z.string().url().optional(),
 
   nodeEnv: z.enum(['development', 'production']).default('development'),
   port: z.coerce.number().default(8080),
@@ -22,6 +23,7 @@ export function loadConfig(): Config {
   const raw = configSchema.parse({
     telegramBotToken: process.env['TELEGRAM_BOT_TOKEN'],
     rapidApiKey: process.env['RAPIDAPI_KEY'],
+    riftcodexProxyUrl: process.env['RIFTCODEX_PROXY_URL'],
     nodeEnv: process.env['NODE_ENV'],
     port: process.env['PORT'],
     webhookUrl: process.env['WEBHOOK_URL'],

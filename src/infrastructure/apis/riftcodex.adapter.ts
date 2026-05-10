@@ -94,6 +94,7 @@ type RiftcodexSet = z.infer<typeof RiftcodexSetSchema>;
 
 interface RiftcodexAdapterOptions {
   baseUrl: string;
+  proxyBaseUrl?: string;
   cache: ICacheService;
   timeoutMs: number;
   retryAttempts: number;
@@ -106,6 +107,16 @@ interface RiftcodexAdapterOptions {
 
 export class RiftcodexAdapter implements ICardRepository {
   constructor(private options: RiftcodexAdapterOptions) {}
+
+  private buildUrl(path: string, queryParams?: URLSearchParams): string {
+    const url = new URL(path, this.options.baseUrl);
+    if (queryParams) url.search = queryParams.toString();
+
+    if (this.options.proxyBaseUrl) {
+      return `${this.options.proxyBaseUrl}?url=${encodeURIComponent(url.toString())}`;
+    }
+    return url.toString();
+  }
 
   async searchCards(options: SearchCardsOptions): Promise<SearchCardsResult> {
     const cacheKey = this.searchCacheKey(options);
@@ -120,9 +131,7 @@ export class RiftcodexAdapter implements ICardRepository {
     if (options.sort) params.set('sort', options.sort);
     if (options.dir) params.set('dir', options.dir);
 
-    const data = await this.fetchJson(
-      `${this.options.baseUrl}/cards/name?${params.toString()}`,
-    );
+    const data = await this.fetchJson(this.buildUrl('/cards/name', params));
     if (!data) {
       return { cards: [], total: 0, page: options.page ?? 1, hasMore: false };
     }
@@ -146,7 +155,7 @@ export class RiftcodexAdapter implements ICardRepository {
     if (cached) return cached;
 
     const data = await this.fetchJson(
-      `${this.options.baseUrl}/cards/${encodeURIComponent(id)}`,
+      this.buildUrl(`/cards/${encodeURIComponent(id)}`),
     );
     if (!data) return null;
 
@@ -164,7 +173,7 @@ export class RiftcodexAdapter implements ICardRepository {
     if (cached) return cached;
 
     const data = await this.fetchJson(
-      `${this.options.baseUrl}/cards/riftbound/${encodeURIComponent(cleanId)}`,
+      this.buildUrl(`/cards/riftbound/${encodeURIComponent(cleanId)}`),
     );
     if (!data) return null;
 
@@ -187,9 +196,7 @@ export class RiftcodexAdapter implements ICardRepository {
     params.set('fuzzy', name);
     params.set('size', '1');
 
-    const data = await this.fetchJson(
-      `${this.options.baseUrl}/cards/name?${params.toString()}`,
-    );
+    const data = await this.fetchJson(this.buildUrl('/cards/name', params));
     if (!data) return null;
 
     const parsed = RiftcodexSearchResponseSchema.parse(data);
@@ -209,7 +216,7 @@ export class RiftcodexAdapter implements ICardRepository {
     if (cached) return cached;
 
     const data = await this.fetchJson(
-      `${this.options.baseUrl}/cards/tcgplayer/${encodeURIComponent(productId)}`,
+      this.buildUrl(`/cards/tcgplayer/${encodeURIComponent(productId)}`),
     );
     if (!data) return null;
 
@@ -228,9 +235,7 @@ export class RiftcodexAdapter implements ICardRepository {
     const params = new URLSearchParams();
     params.set('size', '100');
 
-    const data = await this.fetchJson(
-      `${this.options.baseUrl}/sets?${params.toString()}`,
-    );
+    const data = await this.fetchJson(this.buildUrl('/sets', params));
     if (!data) return [];
 
     const parsed = RiftcodexSetsResponseSchema.parse(data);
@@ -257,9 +262,7 @@ export class RiftcodexAdapter implements ICardRepository {
     params.set('page', String(p));
     params.set('size', String(l));
 
-    const data = await this.fetchJson(
-      `${this.options.baseUrl}/cards?${params.toString()}`,
-    );
+    const data = await this.fetchJson(this.buildUrl('/cards', params));
     if (!data) {
       return { cards: [], total: 0, page: p, hasMore: false };
     }
@@ -284,7 +287,7 @@ export class RiftcodexAdapter implements ICardRepository {
 
     try {
       const indexData = await this.fetchJson(
-        `${this.options.baseUrl}/index/card-names`,
+        this.buildUrl('/index/card-names'),
       );
       if (indexData) {
         const parsed = RiftcodexIndexSchema.parse(indexData);
