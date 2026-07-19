@@ -73,9 +73,5 @@ export function loadConfig(): Config {
     throw new Error('RIFTCODEX_BASE_URL is required when CARD_SOURCE=riftcodex');
   }
 
-  if (raw.nodeEnv === 'production' && !raw.webhookUrl) {
-    throw new Error('WEBHOOK_URL is required when NODE_ENV=production');
-  }
-
   return raw;
 }
