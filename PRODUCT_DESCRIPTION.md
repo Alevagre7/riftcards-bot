@@ -1,7 +1,7 @@
 # Riftbound Card Tracker - Telegram Bot
 
 ## Project Overview
-Telegram bot for looking up Riftbound TCG cards and discovering local events. Users search for cards by name, browse them inline, get random cards, and find upcoming tournament events near Seville.
+Telegram bot for looking up Riftbound TCG cards and discovering local events. Users search for cards by name, browse them inline, get random cards, and find upcoming tournament events near the configured location.
 
 Hexagonal architecture (Ports & Adapters) ensures API providers can be swapped without touching core logic.
 
@@ -13,7 +13,7 @@ Hexagonal architecture (Ports & Adapters) ensures API providers can be swapped w
 - **Framework**: Telegraf v4.16
 - **HTTP Client**: Native `fetch` with custom retry/timeout wrapper
 - **Validation**: Zod v4.4 for env vars and API responses
-- **Hosting**: justrunmy.app (free tier: 0.15 vCPU, 256 MB RAM, 0.3 GB disk, auto HTTPS)
+- **Hosting**: Docker-based host (minimum: 0.15 vCPU, 256 MB RAM, 0.3 GB disk, auto HTTPS)
 - **Dev runner**: `tsx watch` for hot reload
 
 ---
@@ -29,12 +29,12 @@ Hexagonal architecture (Ports & Adapters) ensures API providers can be swapped w
 │                    ↓ Depends on Ports                        │
 ├─────────────────────────────────────────────────────────────┤
 │                      Core (Domain)                           │
-│  (Entities: Card, Event, Set, PriceData)                     │
-│  (Ports: ICardRepository, IEventRepository, ICacheService)   │
+│  (Entities: Card, Event, Set)                                 │
+│  (Ports: ICardRepository, IEventRepository)                    │
 │                    ↓ Implemented by Adapters                 │
 ├─────────────────────────────────────────────────────────────┤
 │                    Infrastructure                            │
-│  (RiftcodexAdapter, EventsAdapter, MemoryCacheService)      │
+│  (RiftapiAdapter, EventsAdapter)                              │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -48,7 +48,7 @@ Hexagonal architecture (Ports & Adapters) ensures API providers can be swapped w
 |---------|-------------|
 | `/card <name>` | Look up a card by name or ID (e.g. `ogn-011`). Shows image + name. If multiple results, shows clickable buttons. |
 | `/random` | Get a random card image + name. |
-| `/events` | List upcoming Riftbound events near Seville (next 7 days, 25 mile radius). Shows name, store, date/time, format. |
+| `/events` | List upcoming Riftbound events near the configured location (next 7 days, configurable radius). Shows name, store, date/time, format. |
 
 ### Inline Mode
 Type `@RiftCardsBot <card name>` in any chat to search cards inline. Tapping a result sends `/card <name>` to the chat.
@@ -60,13 +60,19 @@ Type `@RiftCardsBot <card name>` in any chat to search cards inline. Tapping a r
 
 ## APIs
 
-### 1. Card Data — Riftcodex
-- **Base URL**: `https://api.riftcodex.com`
-- **Auth**: None (read-only)
-- **Adapter**: `src/infrastructure/apis/riftcodex.adapter.ts`
+### 1. Card Data — Self-hosted RiftAPI (primary) / Riftcodex (fallback)
+- **Primary**: Self-hosted RiftAPI (`src/infrastructure/apis/riftapi.adapter.ts`) — the default source.
+- **Fallback**: Third-party Riftcodex public API (`src/infrastructure/apis/riftcodex.adapter.ts`) — activated by setting `CARD_SOURCE=riftcodex` in `.env`.
 - **Port**: `ICardRepository`
 
-**Used endpoints:**
+**Used endpoints (RiftAPI):**
+| Endpoint | Use |
+|----------|-----|
+| `GET /cards/search?q=` | Search cards by fuzzy name |
+| `GET /cards/{riftbound_id}` | Get card by Riftbound ID (e.g. `ogn-011`) |
+| `GET /cards/random` | Get a random card |
+
+**Fallback endpoints (Riftcodex):**
 | Endpoint | Use |
 |----------|-----|
 | `GET /cards/name?fuzzy=` | Search cards by fuzzy name |
@@ -85,23 +91,7 @@ Type `@RiftCardsBot <card name>` in any chat to search cards inline. Tapping a r
 |----------|-----|
 | `GET /hydraproxy/api/v2/events/` | Search events by location, date range, game |
 
-**Parameters**: `start_date_after`, `start_date_before` (next 7 days), `game_slug=riftbound`, `latitude=37.389`, `longitude=-5.984` (Seville), `num_miles=25`, `display_statuses=upcoming,inProgress`.
-
-### 3. Card Prices — Riftbound Prices (Disabled)
-Prices API is disabled due to RapidAPI quota constraints. The price adapter is preserved at `src/infrastructure/apis/riftbound-prices.adapter.ts.bak` for future re-enablement. Port and entities remain in core.
-
----
-
-## Caching Strategy
-
-| Data Type | Cache TTL | Rationale |
-|-----------|-----------|-----------|
-| Card search results | 24 hours | Card metadata rarely changes |
-| Individual card details | 7 days | Static card information |
-| Set/expansion list | 7 days | Nearly static |
-| Random card | 60 seconds | Short-lived to ensure variety |
-
-**Implementation**: `MemoryCacheService` backed by a `Map` with TTL timestamps. Cache keys are deterministic hashes of query parameters.
+**Parameters**: `start_date_after`, `start_date_before` (configured window), `game_slug=riftbound`, `latitude`/`longitude` (configured location), `radius` (configurable), `display_statuses=upcoming,inProgress`.
 
 ---
 
@@ -114,7 +104,6 @@ Prices API is disabled due to RapidAPI quota constraints. The price adapter is p
 ├── PRODUCT_DESCRIPTION.md
 ├── AGENTS.md
 ├── RIFTCODEX_API.md
-├── RIFTBOUND_PRICES_API.md
 ├── package.json
 ├── tsconfig.json
 ├── Dockerfile
@@ -125,17 +114,13 @@ Prices API is disabled due to RapidAPI quota constraints. The price adapter is p
 │   │   ├── entities/
 │   │   │   ├── card.ts
 │   │   │   ├── event.ts
-│   │   │   ├── price.ts
 │   │   │   └── set.ts
 │   │   ├── ports/
 │   │   │   ├── card-repository.ts
-│   │   │   ├── event-repository.ts
-│   │   │   ├── price-repository.ts
-│   │   │   └── cache-service.ts
+│   │   │   └── event-repository.ts
 │   │   └── errors/
 │   │       ├── base-error.ts
 │   │       ├── api-errors.ts
-│   │       ├── price-errors.ts
 │   │       └── index.ts
 │   ├── bot/
 │   │   ├── commands/
@@ -154,10 +139,10 @@ Prices API is disabled due to RapidAPI quota constraints. The price adapter is p
 │   │   └── inline-query.ts
 │   ├── infrastructure/
 │   │   ├── apis/
+│   │   │   ├── riftapi.adapter.ts
+│   │   │   ├── riftapi-mapper.ts
 │   │   │   ├── riftcodex.adapter.ts
 │   │   │   └── events.adapter.ts
-│   │   └── cache/
-│   │       └── memory-cache.service.ts
 │   └── utils/
 │       └── api-client.ts
 ```
@@ -169,17 +154,23 @@ Prices API is disabled due to RapidAPI quota constraints. The price adapter is p
 ```env
 # Required
 TELEGRAM_BOT_TOKEN=your_bot_token_here
+CARD_SOURCE=riftapi                     # 'riftapi' or 'riftcodex'
+RIFTAPI_BASE_URL=                       # Base URL of self-hosted RiftAPI
 
 # Optional
-RAPIDAPI_KEY=                           # Only needed if prices re-enabled
+RIFTCODEX_BASE_URL=                     # Only required when CARD_SOURCE=riftcodex
 NODE_ENV=development                    # 'development' or 'production'
 PORT=8080                               # Server port (webhook mode)
 WEBHOOK_URL=https://your-app.example.com # Required in production
-CACHE_TTL_CARD_HOURS=168                # 7 days
-CACHE_TTL_SEARCH_HOURS=24               # 24 hours
-CACHE_TTL_SET_HOURS=168                 # 7 days
 API_TIMEOUT_MS=10000                    # 10 seconds
 API_RETRY_ATTEMPTS=3                    # Exponential backoff retries
+
+# Events (defaults shown)
+# EVENTS_API_URL=https://api.cloudflare.riftbound.uvsgames.com
+# EVENTS_LATITUDE=37.39
+# EVENTS_LONGITUDE=-5.99
+# EVENTS_RADIUS_KM=80
+# EVENTS_DAYS_AHEAD=7
 ```
 
 ---
@@ -211,27 +202,32 @@ API_RETRY_ATTEMPTS=3                    # Exponential backoff retries
 
 ---
 
-## Deployment — justrunmy.app
+## Deployment — Docker-based host
 
-Free tier: 0.15 vCPU, 0.25 GB RAM, 0.3 GB disk, auto HTTPS, always-on.
+Minimum specs: 0.15 vCPU, 256 MB RAM, 0.3 GB disk, auto HTTPS, always-on.
 
 ### Steps
 
-1. **Create account** at https://justrunmy.app
-2. **Push code** via Git (Dockerfile included in repo):
+1. **Build the Docker image** (Dockerfile included in repo):
    ```bash
-   git push https://<username>:<password>@justrunmy.app/git/<repo> HEAD:deploy
+   docker build -t riftcards-bot .
    ```
-3. **Configure** in their dashboard or via MCP tools:
-   - Set env vars: `TELEGRAM_BOT_TOKEN`, `NODE_ENV=production`, `WEBHOOK_URL=https://<app>.b.jrnm.app`, `PORT=8080`
-   - Map port 8080 to HTTPS with a subdomain (e.g., `riftbot`)
-4. **Set Telegram webhook**:
+2. **Run the container**:
    ```bash
-   curl -F "url=https://riftbot.b.jrnm.app" \
+   docker run -d \
+     -p 8080:8080 \
+     -e TELEGRAM_BOT_TOKEN=your_token \
+     -e CARD_SOURCE=riftapi \
+     -e RIFTAPI_BASE_URL=http://riftapi:8080 \
+     -e NODE_ENV=production \
+     -e WEBHOOK_URL=https://your-app.example.com \
+     riftcards-bot
+   ```
+3. **Set Telegram webhook**:
+   ```bash
+   curl -F "url=https://your-app.example.com" \
      https://api.telegram.org/bot<TOKEN>/setWebhook
    ```
-
-Dockerfile is required for Git push deployments. The platform auto-detects Node.js for Zip Upload deployments (no Dockerfile needed).
 
 ---
 
@@ -262,7 +258,7 @@ Bot connects via polling (no webhook needed). Requires `.env` with `TELEGRAM_BOT
 - [ ] `/card ogn-011` — ID lookup shows image + name
 - [ ] `/card nonexistent` — shows "No card found"
 - [ ] `/random` — returns a valid card
-- [ ] `/events` — shows upcoming events near Seville
+- [ ] `/events` — shows upcoming events near the configured location
 - [ ] Inline mode (`@RiftCardsBot ahri`) — shows list with thumbnails
 - [ ] Tapping inline result sends `/card <name>` to chat
 - [ ] Card search result buttons work
@@ -272,7 +268,6 @@ Bot connects via polling (no webhook needed). Requires `.env` with `TELEGRAM_BOT
 
 ## Future Enhancements
 
-- [ ] Price data re-enablement (when API quota is available)
 - [ ] User location configuration for events
 - [ ] Collection / wishlist tracking
 - [ ] Price alerts

@@ -1,9 +1,10 @@
 import 'dotenv/config';
 import { Telegraf, Context } from 'telegraf';
 import { loadConfig } from './config.js';
-import { MemoryCacheService } from './infrastructure/cache/memory-cache.service.js';
+import { RiftapiAdapter } from './infrastructure/apis/riftapi.adapter.js';
 import { RiftcodexAdapter } from './infrastructure/apis/riftcodex.adapter.js';
 import { EventsAdapter } from './infrastructure/apis/events.adapter.js';
+import { ICardRepository } from './core/ports/card-repository.js';
 import { errorHandler } from './bot/middleware/error-handler.js';
 import { createCardCommand } from './bot/commands/card.js';
 import { createRandomCommand } from './bot/commands/random.js';
@@ -15,32 +16,32 @@ function userId(ctx: Context): string {
   return ctx.from?.username ?? ctx.from?.id?.toString() ?? 'unknown';
 }
 
+function buildCardRepository(config: ReturnType<typeof loadConfig>): ICardRepository {
+  const common = {
+    timeoutMs: config.apiTimeoutMs,
+    retryAttempts: config.apiRetryAttempts,
+  };
+  switch (config.cardSource) {
+    case 'riftapi':
+      // loadConfig guarantees riftapiBaseUrl is set when cardSource=riftapi.
+      return new RiftapiAdapter({ baseUrl: config.riftapiBaseUrl!, ...common });
+    case 'riftcodex':
+      return new RiftcodexAdapter({ baseUrl: config.riftcodexBaseUrl!, ...common });
+  }
+}
+
 async function main() {
   const config = loadConfig();
 
-  const cache = new MemoryCacheService();
-
-  const cardRepository = new RiftcodexAdapter({
-    baseUrl: 'https://api.riftcodex.com',
-    proxyBaseUrl: config.riftcodexProxyUrl ?? 'https://riftcards-bot-proxy.alevagre7.workers.dev',
-    cache,
-    timeoutMs: config.apiTimeoutMs,
-    retryAttempts: config.apiRetryAttempts,
-    cacheTtlSeconds: {
-      card: config.cacheTtlCardHours * 3600,
-      search: config.cacheTtlSearchHours * 3600,
-      set: config.cacheTtlSetHours * 3600,
-    },
-  });
+  const cardRepository = buildCardRepository(config);
 
   const eventRepository = new EventsAdapter({
-    baseUrl: 'https://api.cloudflare.riftbound.uvsgames.com',
-    proxyBaseUrl: config.riftcodexProxyUrl ?? 'https://riftcards-bot-proxy.alevagre7.workers.dev',
+    baseUrl: config.eventsApiUrl,
     timeoutMs: config.apiTimeoutMs,
     retryAttempts: config.apiRetryAttempts,
-    latitude: 37.389092399999996,
-    longitude: -5.9844589,
-    numMiles: 25,
+    latitude: config.eventsLatitude,
+    longitude: config.eventsLongitude,
+    numMiles: config.eventsRadiusKm * 0.621371, // km → miles (the upstream takes miles)
   });
 
   const bot = new Telegraf(config.telegramBotToken);
@@ -65,7 +66,7 @@ async function main() {
   bot.telegram.setMyCommands([
     { command: 'card', description: 'Look up a card by name or ID' },
     { command: 'random', description: 'Get a random card' },
-    { command: 'events', description: 'Upcoming events near Seville' },
+    { command: 'events', description: 'Upcoming events near the configured location' },
   ]);
 
   bot.command('card', createCardCommand({ cardRepository }));

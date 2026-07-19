@@ -10,12 +10,11 @@
 3. [Interface Contracts](#interface-contracts)
 4. [Dependency Injection](#dependency-injection)
 5. [Error Handling Taxonomy](#error-handling-taxonomy)
-6. [Caching Strategy](#caching-strategy)
-7. [API Adapter Guidelines](#api-adapter-guidelines)
-8. [Environment Variables](#environment-variables)
-9. [Development Workflow](#development-workflow)
-10. [Deployment](#deployment)
-11. [Code Style](#code-style)
+6. [API Adapter Guidelines](#api-adapter-guidelines)
+7. [Environment Variables](#environment-variables)
+8. [Development Workflow](#development-workflow)
+9. [Deployment](#deployment)
+10. [Code Style](#code-style)
 
 ---
 
@@ -36,7 +35,7 @@ Hexagonal Architecture (Ports & Adapters) with three layers:
 ### 3. Infrastructure
 - **Location**: `src/infrastructure/`
 - **Rule**: Implements ports from `src/core/ports/`. Can use external libraries.
-- **Contents**: API adapters (Riftcodex, Events), cache implementations.
+- **Contents**: API adapters (Riftapi, Riftcodex, Events).
 
 ### Dependency Direction
 ```
@@ -128,32 +127,6 @@ export interface IEventRepository {
 }
 ```
 
-### IPriceRepository (Disabled)
-```typescript
-// src/core/ports/price-repository.ts
-
-import { PriceData } from '../entities/price';
-
-export interface IPriceRepository {
-  getPrice(
-    cardIdentifier: string,
-    options?: { setCode?: string; collectorNumber?: string },
-  ): Promise<PriceData | null>;
-}
-```
-
-### ICacheService
-```typescript
-// src/core/ports/cache-service.ts
-
-export interface ICacheService {
-  get<T>(key: string): Promise<T | null>;
-  set<T>(key: string, value: T, ttlSeconds: number): Promise<void>;
-  delete(key: string): Promise<void>;
-  clear(): Promise<void>;
-}
-```
-
 ### Domain Entities
 
 ```typescript
@@ -189,26 +162,6 @@ export interface Event {
   readonly format: string;
 }
 
-// src/core/entities/price.ts
-export interface PriceData {
-  readonly cardId: string;
-  readonly cardName: string;
-  readonly currency: string;
-  readonly lowestNearMint: number | null;
-  readonly lowestNearMintEuOnly: number | null;
-  readonly average30d: number | null;
-  readonly average7d: number | null;
-  readonly gradedPrices?: readonly GradedPrice[];
-  readonly lastUpdated?: Date;
-  readonly cardmarketUrl?: string;
-}
-
-export interface GradedPrice {
-  readonly gradingCompany: 'PSA' | 'BGS' | 'CGC' | string;
-  readonly grade: string;
-  readonly price: number;
-}
-
 // src/core/entities/set.ts
 export interface Set {
   readonly id: string;
@@ -227,29 +180,31 @@ Manual composition in `src/index.ts`. No DI framework.
 
 ### Pattern
 ```typescript
+function buildCardRepository(config: Config): ICardRepository {
+  const common = {
+    timeoutMs: config.apiTimeoutMs,
+    retryAttempts: config.apiRetryAttempts,
+  };
+  switch (config.cardSource) {
+    case 'riftapi':
+      return new RiftapiAdapter({ baseUrl: config.riftapiBaseUrl!, ...common });
+    case 'riftcodex':
+      return new RiftcodexAdapter({ baseUrl: config.riftcodexBaseUrl!, ...common });
+  }
+}
+
 async function main() {
   const config = loadConfig();
-  const cache = new MemoryCacheService();
 
-  const cardRepository = new RiftcodexAdapter({
-    baseUrl: 'https://api.riftcodex.com',
-    cache,
-    timeoutMs: config.apiTimeoutMs,
-    retryAttempts: config.apiRetryAttempts,
-    cacheTtlSeconds: {
-      card: config.cacheTtlCardHours * 3600,
-      search: config.cacheTtlSearchHours * 3600,
-      set: config.cacheTtlSetHours * 3600,
-    },
-  });
+  const cardRepository = buildCardRepository(config);
 
   const eventRepository = new EventsAdapter({
-    baseUrl: 'https://api.cloudflare.riftbound.uvsgames.com',
+    baseUrl: config.eventsApiUrl,
     timeoutMs: config.apiTimeoutMs,
     retryAttempts: config.apiRetryAttempts,
-    latitude: 37.389092399999996,
-    longitude: -5.9844589,
-    numMiles: 25,
+    latitude: config.eventsLatitude,
+    longitude: config.eventsLongitude,
+    numMiles: config.eventsRadiusKm * 0.621371,
   });
 
   const bot = new Telegraf(config.telegramBotToken);
@@ -260,9 +215,6 @@ async function main() {
   bot.on('inline_query', createInlineQueryHandler({ cardRepository }));
   bot.action(/^card:(.+)$/, createCardActionHandler({ cardRepository }));
 
-  // Price action disabled — RapidAPI quota exhausted
-  // bot.action(/^price:(.+)$/, createPriceActionHandler({ cardRepository, priceRepository }));
-
   if (config.nodeEnv === 'production') {
     await bot.launch({ webhook: { domain: config.webhookUrl!, port: config.port } });
   } else {
@@ -272,13 +224,12 @@ async function main() {
 ```
 
 ### Swapping Providers
-Change one line in `main()` — zero changes to commands or formatters:
+Change the `CARD_SOURCE` env var or add a new `case` in `buildCardRepository` — zero changes to commands or formatters:
 
 ```typescript
-// Before
-const cardRepository = new RiftcodexAdapter({ ... });
-// After
-const cardRepository = new NewCardProviderAdapter({ ... });
+// The env var selects the active adapter at startup (see ADR-0004).
+// CARD_SOURCE=riftapi   → RiftapiAdapter (primary)
+// CARD_SOURCE=riftcodex → RiftcodexAdapter (fallback)
 ```
 
 ---
@@ -296,23 +247,6 @@ export abstract class DomainError extends Error {
   constructor(message: string) {
     super(message);
     this.name = this.constructor.name;
-  }
-}
-
-// src/core/errors/price-errors.ts
-export class PriceUnavailableError extends DomainError {
-  readonly code = 'PRICE_UNAVAILABLE';
-  readonly isUserFacing = true;
-  constructor(cardName: string) {
-    super(`Price data for "${cardName}" is currently unavailable.`);
-  }
-}
-
-export class ApiRateLimitError extends DomainError {
-  readonly code = 'RATE_LIMITED';
-  readonly isUserFacing = true;
-  constructor() {
-    super('The price service is temporarily unavailable due to high demand. Please try again later.');
   }
 }
 
@@ -338,7 +272,6 @@ export class ApiResponseError extends DomainError {
 | External Error | Domain Error |
 |---------------|--------------|
 | HTTP 404 | Return `null` (not an error) |
-| HTTP 429 (RapidAPI) | `ApiRateLimitError` |
 | HTTP 5xx | `ApiResponseError` |
 | Fetch timeout | `ApiTimeoutError` |
 | Invalid JSON / parse failure | `ApiResponseError` |
@@ -366,41 +299,6 @@ export function errorHandler() {
 
 ---
 
-## Caching Strategy
-
-### Cache Keys
-```
-card:{id}              → Card details
-card:riftbound:{id}    → Card by Riftbound ID
-card:name:{hash}       → Card by name
-card:tcgplayer:{id}    → Card by TCGPlayer ID
-search:{hash}          → Search results
-set:list               → All sets
-set:{code}:cards:{page} → Cards in set
-price:{cardId}         → Price data
-random                 → Random card (60s TTL)
-```
-
-### TTL Configuration
-```typescript
-// src/config.ts
-cacheTtlCardHours: z.coerce.number().default(168),    // 7 days
-cacheTtlSearchHours: z.coerce.number().default(24),   // 24 hours
-cacheTtlSetHours: z.coerce.number().default(168),     // 7 days
-```
-
-TTLs are wired into `RiftcodexAdapter` via `cacheTtlSeconds` option (converted to seconds on instantiation).
-
-### MemoryCacheService
-```typescript
-// src/infrastructure/cache/memory-cache.service.ts
-export class MemoryCacheService implements ICacheService { ... }
-```
-
-Implements `ICacheService`. `Map`-based with TTL timestamps.
-
----
-
 ## API Adapter Guidelines
 
 When creating a new adapter:
@@ -411,36 +309,60 @@ When creating a new adapter:
 5. Handle errors by mapping to domain errors
 6. Wire in `src/index.ts`
 
-See existing adapters for reference: `riftcodex.adapter.ts`, `events.adapter.ts`.
+See existing adapters for reference: `riftapi.adapter.ts`, `riftcodex.adapter.ts`, `events.adapter.ts`.
 
 ---
 
 ## Environment Variables
 
-Validated at startup with Zod.
+Validated at startup with Zod. The `CARD_SOURCE` variable selects the active card data adapter — there is no default so a misconfigured deployment fails fast with a clear error.
 
 ```typescript
 // src/config.ts
+const cardSourceSchema = z.enum(['riftapi', 'riftcodex']);
+
 const configSchema = z.object({
   telegramBotToken: z.string().min(1, 'TELEGRAM_BOT_TOKEN is required'),
-  rapidApiKey: z.string().optional(),
+
+  // Adapter selection
+  cardSource: cardSourceSchema,
+  riftapiBaseUrl: z.string().url().optional(),
+  riftcodexBaseUrl: z.string().url().optional(),
 
   nodeEnv: z.enum(['development', 'production']).default('development'),
   port: z.coerce.number().default(8080),
   webhookUrl: z.string().url().optional(),
 
-  cacheTtlCardHours: z.coerce.number().default(168),
-  cacheTtlSearchHours: z.coerce.number().default(24),
-  cacheTtlSetHours: z.coerce.number().default(168),
-
   apiTimeoutMs: z.coerce.number().default(10000),
   apiRetryAttempts: z.coerce.number().default(3),
+
+  // Events adapter
+  eventsApiUrl: z.string().url().default('https://api.cloudflare.riftbound.uvsgames.com'),
+  eventsLatitude: z.coerce.number().default(37.39),
+  eventsLongitude: z.coerce.number().default(-5.99),
+  eventsRadiusKm: z.coerce.number().default(80),
+  eventsDaysAhead: z.coerce.number().default(7),
 });
 
 export function loadConfig(): Config {
+  // CARD_SOURCE validated before schema parse for a clear error message
+  const cardSource = process.env['CARD_SOURCE'];
+  if (cardSource !== 'riftapi' && cardSource !== 'riftcodex') {
+    throw new Error(
+      `CARD_SOURCE must be set to "riftapi" or "riftcodex" (got ${JSON.stringify(cardSource)})`,
+    );
+  }
+
   const raw = configSchema.parse({ ... });
 
-  // Enforce webhook URL in production
+  // The chosen adapter's base URL is required
+  if (raw.cardSource === 'riftapi' && !raw.riftapiBaseUrl) {
+    throw new Error('RIFTAPI_BASE_URL is required when CARD_SOURCE=riftapi');
+  }
+  if (raw.cardSource === 'riftcodex' && !raw.riftcodexBaseUrl) {
+    throw new Error('RIFTCODEX_BASE_URL is required when CARD_SOURCE=riftcodex');
+  }
+
   if (raw.nodeEnv === 'production' && !raw.webhookUrl) {
     throw new Error('WEBHOOK_URL is required when NODE_ENV=production');
   }
@@ -452,15 +374,19 @@ export function loadConfig(): Config {
 | Variable | Required | Default |
 |----------|----------|---------|
 | `TELEGRAM_BOT_TOKEN` | Yes | — |
-| `RAPIDAPI_KEY` | No | — |
+| `CARD_SOURCE` | Yes | — |
+| `RIFTAPI_BASE_URL` | Conditional | — |
+| `RIFTCODEX_BASE_URL` | Conditional | — |
 | `NODE_ENV` | No | `development` |
 | `PORT` | No | `8080` |
 | `WEBHOOK_URL` | Yes in prod | — |
-| `CACHE_TTL_CARD_HOURS` | No | `168` |
-| `CACHE_TTL_SEARCH_HOURS` | No | `24` |
-| `CACHE_TTL_SET_HOURS` | No | `168` |
 | `API_TIMEOUT_MS` | No | `10000` |
 | `API_RETRY_ATTEMPTS` | No | `3` |
+| `EVENTS_API_URL` | No | upstream URL |
+| `EVENTS_LATITUDE` | No | `37.39` |
+| `EVENTS_LONGITUDE` | No | `-5.99` |
+| `EVENTS_RADIUS_KM` | No | `80` |
+| `EVENTS_DAYS_AHEAD` | No | `7` |
 
 ---
 
@@ -492,7 +418,6 @@ npm run dev
 ### Local Development
 - Polling mode (no webhook needed)
 - Hot reload via `tsx watch`
-- In-memory cache only
 - Verbose logging enabled in middleware
 
 ### Testing Commands
@@ -502,30 +427,39 @@ npm run dev
 | `/card ahri` | Multiple matches → buttons |
 | `/card ogn-011` | ID lookup → image + name |
 | `/random` | Random card |
-| `/events` | Upcoming events near Seville |
+| `/events` | Upcoming events near the configured location |
 | `@RiftCardsBot ahri` | Inline list with thumbnails |
 
 ---
 
 ## Deployment
 
-### justrunmy.app
-Free tier: 0.15 vCPU, 0.25 GB RAM, 0.3 GB disk, auto HTTPS.
+### Docker-based Host
 
-1. Push code via Git (Dockerfile included in repo):
+The bot ships with a Dockerfile. Deploy via any Docker host with the following:
+
+1. Build or pull the image:
    ```bash
-   git push https://<user>:<pass>@justrunmy.app/git/<repo> HEAD:deploy
+   docker build -t riftcards-bot .
    ```
-2. Configure via dashboard or MCP tools:
-   - Env vars: `TELEGRAM_BOT_TOKEN`, `NODE_ENV=production`, `WEBHOOK_URL`, `PORT=8080`
-   - Port: map 8080 to HTTPS with a subdomain
+2. Run with the required env vars:
+   ```bash
+   docker run -d --name riftcards-bot \
+     -e TELEGRAM_BOT_TOKEN=... \
+     -e CARD_SOURCE=riftapi \
+     -e RIFTAPI_BASE_URL=http://riftapi:8080 \
+     -e NODE_ENV=production \
+     -e WEBHOOK_URL=https://your-app.example.com \
+     -p 8080:8080 \
+     riftcards-bot
+   ```
 3. Set Telegram webhook:
    ```bash
-   curl -F "url=https://<app>.b.jrnm.app" \
+   curl -F "url=https://your-app.example.com" \
      https://api.telegram.org/bot<TOKEN>/setWebhook
    ```
 
-Zip Upload also supported (no Dockerfile required — platform auto-detects Node.js).
+The bot talks to upstream APIs directly — no proxy layer required. Ensure the card data source (riftapi or riftcodex) and the events API are reachable from the container's network.
 
 ---
 
@@ -576,7 +510,6 @@ Before submitting code:
 - [ ] No layer violations (bot → infrastructure)
 - [ ] Ports implemented exactly
 - [ ] API responses Zod-validated
-- [ ] Cache checked before API calls
 - [ ] New env vars in `.env.example`, `config.ts`, and this doc
 - [ ] No `any` in core or bot layers
 - [ ] Immutable domain entities (`readonly`)

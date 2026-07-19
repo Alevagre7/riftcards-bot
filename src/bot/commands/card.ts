@@ -25,9 +25,13 @@ export function createCardCommand(deps: CardCommandDeps) {
 
     await ctx.sendChatAction('typing');
 
-    const isId = /^[a-z]{3}-\d{3,}$/i.test(query);
-    if (isId) {
-      const card = await deps.cardRepository.getCardByRiftboundId(query);
+    // The id may be either a bare riftbound id (`ogn-011`) or a
+    // composite (riftboundId/collectorNumber, e.g. `ogn-011/298`).
+    // Both forms route through getCardByRiftboundId with the
+    // riftbound id half. See ADR-0001.
+    const idMatch = /^([a-z]{3,4}-\d{3}[a-z]?)(?:\/\d+)?$/i.exec(query);
+    if (idMatch) {
+      const card = await deps.cardRepository.getCardByRiftboundId(idMatch[1]!);
       if (card) {
         await sendCardPreview(ctx, card);
       } else {
@@ -67,7 +71,11 @@ export function createCardCommand(deps: CardCommandDeps) {
 
     const buttons = results.cards.map((c) => [
       Markup.button.callback(
-        `${c.name} [${c.setCode}-${c.collectorNumber}]`,
+        // setCode is stored lowercase; display as uppercase to match
+        // the public_code style (e.g. OGN-011/298). The callback
+        // payload uses c.id (the composite key) so the action
+        // handler can resolve any of the matches.
+        `${c.name} [${c.setCode.toUpperCase()}-${c.collectorNumber}]`,
         `card:${c.id}`,
       ),
     ]);

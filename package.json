@@ -1,7 +1,21 @@
 {
   "name": "riftbound-card-tracker",
-  "version": "0.1.0",
-  "description": "Telegram bot for Riftbound card lookup and pricing",
+  "version": "0.2.0",
+  "description": "Telegram bot for Riftbound card data, backed by the self-hosted riftapi.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Alevagre7/riftcards-bot.git"
+  },
+  "homepage": "https://github.com/Alevagre7/riftcards-bot#readme",
+  "keywords": [
+    "telegram-bot",
+    "riftbound",
+    "tcg",
+    "telegraf",
+    "typescript"
+  ],
+  "author": "riftcards-bot contributors",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "tsx watch src/index.ts",

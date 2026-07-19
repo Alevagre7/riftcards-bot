@@ -1,8 +1,15 @@
+// RiftcodexAdapter is the env-flagged fallback for the bot, kept
+// behind CARD_SOURCE=riftcodex. The new primary adapter is
+// RiftapiAdapter (../riftapi.adapter.ts), which talks to the
+// self-hosted riftapi. This adapter still talks to the third-party
+// Riftcodex public API, but the interface and Card shape are kept
+// in sync with the new primary adapter: composite ids, no
+// flavorText, no tcgplayerId, no cache, no proxy.
+
 import { z } from 'zod';
 import { ICardRepository, SearchCardsOptions, SearchCardsResult } from '../../core/ports/card-repository.js';
 import { Card } from '../../core/entities/card.js';
 import { Set } from '../../core/entities/set.js';
-import { ICacheService } from '../../core/ports/cache-service.js';
 import { ApiTimeoutError, ApiResponseError } from '../../core/errors/index.js';
 import { DomainError } from '../../core/errors/base-error.js';
 import { fetchWithRetry } from '../../utils/api-client.js';
@@ -83,26 +90,13 @@ const RiftcodexSetsResponseSchema = z.object({
   items: z.array(RiftcodexSetSchema),
 });
 
-const RiftcodexIndexSchema = z.object({
-  total: z.number().int().nonnegative(),
-  type: z.string(),
-  values: z.array(z.union([z.string(), z.number()])),
-});
-
 type RiftcodexCard = z.infer<typeof RiftcodexCardSchema>;
 type RiftcodexSet = z.infer<typeof RiftcodexSetSchema>;
 
 interface RiftcodexAdapterOptions {
   baseUrl: string;
-  proxyBaseUrl?: string;
-  cache: ICacheService;
   timeoutMs: number;
   retryAttempts: number;
-  cacheTtlSeconds: {
-    card: number;
-    search: number;
-    set: number;
-  };
 }
 
 export class RiftcodexAdapter implements ICardRepository {
@@ -111,18 +105,10 @@ export class RiftcodexAdapter implements ICardRepository {
   private buildUrl(path: string, queryParams?: URLSearchParams): string {
     const url = new URL(path, this.options.baseUrl);
     if (queryParams) url.search = queryParams.toString();
-
-    if (this.options.proxyBaseUrl) {
-      return `${this.options.proxyBaseUrl}?url=${encodeURIComponent(url.toString())}`;
-    }
     return url.toString();
   }
 
   async searchCards(options: SearchCardsOptions): Promise<SearchCardsResult> {
-    const cacheKey = this.searchCacheKey(options);
-    const cached = await this.options.cache.get<SearchCardsResult>(cacheKey);
-    if (cached) return cached;
-
     const params = new URLSearchParams();
     params.set('fuzzy', options.query);
     if (options.setId) params.set('set_id', options.setId);
@@ -138,40 +124,25 @@ export class RiftcodexAdapter implements ICardRepository {
 
     const parsed = RiftcodexSearchResponseSchema.parse(data);
 
-    const result: SearchCardsResult = {
+    return {
       cards: parsed.items.map((c) => this.mapToDomain(c)),
       total: parsed.total,
       page: parsed.page,
       hasMore: parsed.page < parsed.pages,
     };
-
-    await this.options.cache.set(cacheKey, result, this.options.cacheTtlSeconds.search);
-    return result;
   }
 
   async getCardById(id: string): Promise<Card | null> {
-    const cacheKey = `card:${id}`;
-    const cached = await this.options.cache.get<Card>(cacheKey);
-    if (cached) return cached;
-
-    const data = await this.fetchJson(
-      this.buildUrl(`/cards/${encodeURIComponent(id)}`),
-    );
-    if (!data) return null;
-
-    const parsed = RiftcodexCardSchema.parse(data);
-    const card = this.mapToDomain(parsed);
-
-    await this.options.cache.set(cacheKey, card, this.options.cacheTtlSeconds.card);
-    return card;
+    // Composite id parsing — same convention as RiftapiAdapter. If
+    // the input is a bare riftbound id (no slash), the whole string
+    // is used.
+    const slash = id.indexOf('/');
+    const riftboundId = slash < 0 ? id : id.slice(0, slash);
+    return this.getCardByRiftboundId(riftboundId);
   }
 
   async getCardByRiftboundId(riftboundId: string): Promise<Card | null> {
     const cleanId = riftboundId.toLowerCase().trim();
-    const cacheKey = `card:riftbound:${cleanId}`;
-    const cached = await this.options.cache.get<Card>(cacheKey);
-    if (cached) return cached;
-
     const data = await this.fetchJson(
       this.buildUrl(`/cards/riftbound/${encodeURIComponent(cleanId)}`),
     );
@@ -179,19 +150,10 @@ export class RiftcodexAdapter implements ICardRepository {
 
     const parsed = z.array(RiftcodexCardSchema).safeParse(data);
     if (!parsed.success || !parsed.data?.[0]) return null;
-
-    const card = this.mapToDomain(parsed.data[0]);
-
-    await this.options.cache.set(cacheKey, card, this.options.cacheTtlSeconds.card);
-    return card;
+    return this.mapToDomain(parsed.data[0]);
   }
 
   async getCardByName(name: string): Promise<Card | null> {
-    const cleanName = name.toLowerCase().trim();
-    const cacheKey = `card:name:${encodeURIComponent(cleanName)}`;
-    const cached = await this.options.cache.get<Card>(cacheKey);
-    if (cached) return cached;
-
     const params = new URLSearchParams();
     params.set('fuzzy', name);
     params.set('size', '1');
@@ -204,34 +166,20 @@ export class RiftcodexAdapter implements ICardRepository {
 
     const first = parsed.items[0];
     if (!first) return null;
-    const card = this.mapToDomain(first);
-
-    await this.options.cache.set(cacheKey, card, this.options.cacheTtlSeconds.card);
-    return card;
+    return this.mapToDomain(first);
   }
 
   async getCardByTcgPlayerId(productId: string): Promise<Card | null> {
-    const cacheKey = `card:tcgplayer:${productId}`;
-    const cached = await this.options.cache.get<Card>(cacheKey);
-    if (cached) return cached;
-
     const data = await this.fetchJson(
       this.buildUrl(`/cards/tcgplayer/${encodeURIComponent(productId)}`),
     );
     if (!data) return null;
 
     const parsed = RiftcodexCardSchema.parse(data);
-    const card = this.mapToDomain(parsed);
-
-    await this.options.cache.set(cacheKey, card, this.options.cacheTtlSeconds.card);
-    return card;
+    return this.mapToDomain(parsed);
   }
 
   async getSets(): Promise<Set[]> {
-    const cacheKey = 'set:list';
-    const cached = await this.options.cache.get<Set[]>(cacheKey);
-    if (cached) return cached;
-
     const params = new URLSearchParams();
     params.set('size', '100');
 
@@ -239,11 +187,7 @@ export class RiftcodexAdapter implements ICardRepository {
     if (!data) return [];
 
     const parsed = RiftcodexSetsResponseSchema.parse(data);
-
-    const sets: Set[] = parsed.items.map((s) => this.mapSetToDomain(s));
-
-    await this.options.cache.set(cacheKey, sets, this.options.cacheTtlSeconds.set);
-    return sets;
+    return parsed.items.map((s) => this.mapSetToDomain(s));
   }
 
   async getCardsBySet(
@@ -253,10 +197,6 @@ export class RiftcodexAdapter implements ICardRepository {
   ): Promise<SearchCardsResult> {
     const p = page ?? 1;
     const l = limit ?? 50;
-    const cacheKey = `set:${setCode}:cards:${p}`;
-    const cached = await this.options.cache.get<SearchCardsResult>(cacheKey);
-    if (cached) return cached;
-
     const params = new URLSearchParams();
     params.set('set_id', setCode);
     params.set('page', String(p));
@@ -269,52 +209,29 @@ export class RiftcodexAdapter implements ICardRepository {
 
     const parsed = RiftcodexSearchResponseSchema.parse(data);
 
-    const result: SearchCardsResult = {
+    return {
       cards: parsed.items.map((c) => this.mapToDomain(c)),
       total: parsed.total,
       page: parsed.page,
       hasMore: parsed.page < parsed.pages,
     };
-
-    await this.options.cache.set(cacheKey, result, this.options.cacheTtlSeconds.search);
-    return result;
   }
 
   async getRandomCard(): Promise<Card | null> {
-    const cacheKey = 'random';
-    const cached = await this.options.cache.get<Card>(cacheKey);
-    if (cached) return cached;
-
-    try {
-      const indexData = await this.fetchJson(
-        this.buildUrl('/index/card-names'),
-      );
-      if (indexData) {
-        const parsed = RiftcodexIndexSchema.parse(indexData);
-        if (parsed.values.length > 0) {
-          const randomIdx = Math.floor(Math.random() * parsed.values.length);
-          const randomName = String(parsed.values[randomIdx]);
-          const card = await this.getCardByName(randomName);
-          if (card) {
-            await this.options.cache.set(cacheKey, card, 60);
-            return card;
-          }
-        }
+    // The third-party Riftcodex API does not have a /cards/random
+    // endpoint. Fall back to picking from the names index.
+    const indexData = await this.fetchJson(this.buildUrl('/index/card-names'));
+    if (indexData) {
+      const parsed = z.object({
+        values: z.array(z.union([z.string(), z.number()])),
+      }).safeParse(indexData);
+      if (parsed.success && parsed.data.values.length > 0) {
+        const idx = Math.floor(Math.random() * parsed.data.values.length);
+        const name = String(parsed.data.values[idx]);
+        if (name) return this.getCardByName(name);
       }
-    } catch {
-      // Fall through to fallback
     }
-
-    const result = await this.searchCards({
-      query: '',
-      limit: 50,
-      page: Math.floor(Math.random() * 50) + 1,
-      sort: 'name',
-    });
-
-    if (result.cards.length === 0) return null;
-    const idx = Math.floor(Math.random() * result.cards.length);
-    return result.cards[idx] ?? null;
+    return null;
   }
 
   private async fetchJson(url: string): Promise<unknown> {
@@ -348,32 +265,52 @@ export class RiftcodexAdapter implements ICardRepository {
     const collectorNumber = typeof api.collector_number === 'number'
       ? String(api.collector_number)
       : api.collector_number;
+    // Composite id: riftboundId/collectorNumber. Same convention as
+    // RiftapiAdapter and the bot's Card entity (see ADR-0001).
+    const riftboundId = (api.riftbound_id ?? '').toLowerCase();
+    const id = riftboundId ? `${riftboundId}/${collectorNumber}` : api.id;
 
-    return {
-      id: api.id,
+    const result: Card = {
+      id,
       name: api.name,
-      setCode: api.set?.set_id ?? '',
+      setCode: (api.set?.set_id ?? '').toLowerCase(),
       collectorNumber,
       rarity: api.classification?.rarity ?? '',
       type: api.classification?.type ?? '',
       keywords: api.tags ?? [],
-      ...(api.set?.label != null ? { setName: api.set.label } : {}),
-      ...(api.classification?.supertype != null
-        ? { supertype: api.classification.supertype }
-        : {}),
-      ...(api.classification?.domain != null && api.classification.domain.length > 0
-        ? { domain: api.classification.domain.join(', ') }
-        : {}),
-      ...(api.attributes?.energy != null ? { energy: api.attributes.energy } : {}),
-      ...(api.attributes?.might != null ? { might: api.attributes.might } : {}),
-      ...(api.attributes?.power != null ? { power: api.attributes.power } : {}),
-      ...(api.text?.plain ? { text: api.text.plain } : {}),
-      ...(api.text?.flavour != null ? { flavorText: api.text.flavour } : {}),
-      ...(api.media?.artist != null ? { artist: api.media.artist } : {}),
-      ...(api.media?.image_url != null ? { imageUrl: api.media.image_url } : {}),
-      ...(api.riftbound_id != null ? { riftboundId: api.riftbound_id } : {}),
-      ...(api.tcgplayer_id != null ? { tcgplayerId: api.tcgplayer_id } : {}),
     };
+
+    if (api.set?.label != null) {
+      (result as { setName?: string }).setName = api.set.label;
+    }
+    if (api.classification?.supertype != null) {
+      (result as { supertype?: string }).supertype = api.classification.supertype;
+    }
+    if (api.classification?.domain != null && api.classification.domain.length > 0) {
+      (result as { domain?: string }).domain = api.classification.domain.join(', ');
+    }
+    if (api.attributes?.energy != null) {
+      (result as { energy?: number }).energy = api.attributes.energy;
+    }
+    if (api.attributes?.might != null) {
+      (result as { might?: number }).might = api.attributes.might;
+    }
+    if (api.attributes?.power != null) {
+      (result as { power?: number }).power = api.attributes.power;
+    }
+    if (api.text?.plain) {
+      (result as { text?: string }).text = api.text.plain;
+    }
+    if (api.media?.artist != null) {
+      (result as { artist?: string }).artist = api.media.artist;
+    }
+    if (api.media?.image_url != null) {
+      (result as { imageUrl?: string }).imageUrl = api.media.image_url;
+    }
+    if (riftboundId) {
+      (result as { riftboundId?: string }).riftboundId = riftboundId;
+    }
+    return result;
   }
 
   private mapSetToDomain(api: RiftcodexSet): Set {
@@ -384,16 +321,5 @@ export class RiftcodexAdapter implements ICardRepository {
       ...(api.published_on != null ? { releaseDate: api.published_on } : {}),
       ...(api.card_count != null ? { cardCount: api.card_count } : {}),
     };
-  }
-
-  private searchCacheKey(options: SearchCardsOptions): string {
-    const parts: string[] = [];
-    parts.push(`q=${encodeURIComponent(options.query)}`);
-    if (options.setId) parts.push(`set=${encodeURIComponent(options.setId)}`);
-    if (options.page) parts.push(`p=${options.page}`);
-    if (options.limit) parts.push(`l=${options.limit}`);
-    if (options.sort) parts.push(`sort=${options.sort}`);
-    if (options.dir) parts.push(`dir=${options.dir}`);
-    return `search:${parts.join('&')}`;
   }
 }

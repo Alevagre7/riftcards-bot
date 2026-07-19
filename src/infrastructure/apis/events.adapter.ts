@@ -23,7 +23,6 @@ const EventsResponseSchema = z.object({
 
 interface EventsAdapterOptions {
   baseUrl: string;
-  proxyBaseUrl?: string;
   timeoutMs: number;
   retryAttempts: number;
   latitude: number;
@@ -37,10 +36,6 @@ export class EventsAdapter implements IEventRepository {
   private buildUrl(path: string, queryParams: URLSearchParams): string {
     const url = new URL(path, this.options.baseUrl);
     url.search = queryParams.toString();
-
-    if (this.options.proxyBaseUrl) {
-      return `${this.options.proxyBaseUrl}?url=${encodeURIComponent(url.toString())}`;
-    }
     return url.toString();
   }
 
