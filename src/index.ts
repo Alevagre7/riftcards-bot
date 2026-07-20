@@ -77,10 +77,10 @@ async function main() {
 
   bot.action(/^card:(.+)$/, createCardActionHandler({ cardRepository }));
 
-  if (config.nodeEnv === 'production') {
+  if (config.webhookUrl) {
     await bot.launch({
       webhook: {
-        domain: config.webhookUrl!,
+        domain: config.webhookUrl,
         port: config.port,
       },
     });
