@@ -109,6 +109,6 @@ export function createEventsCommand(deps: EventsCommandDeps) {
     const end = new Date(now.getTime() + deps.daysAhead * 24 * 60 * 60 * 1000);
     const events = await deps.eventRepository.getEvents(now, end, location);
 
-    await ctx.reply(formatEventList(events), { parse_mode: 'HTML' });
+    await ctx.reply(formatEventList(events, deps.daysAhead), { parse_mode: 'HTML' });
   };
 }

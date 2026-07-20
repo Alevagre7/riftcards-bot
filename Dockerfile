@@ -21,6 +21,15 @@ RUN npm ci --omit=dev
 
 COPY --from=build /app/dist ./dist
 
+# The bot persists per-user settings to a SQLite file at /data
+# (see ADR-0006). Declaring /data as a volume is self-documenting:
+# it tells Docker the path is meant to outlive the container, and
+# `docker run` without an explicit -v creates an anonymous volume
+# so the SQLite file is not silently lost on container restart.
+# Production deployments should mount a named volume here, e.g.
+# `-v riftbot-data:/data`.
+VOLUME ["/data"]
+
 HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=3 \
   CMD node -e "process.exit(0)"
 

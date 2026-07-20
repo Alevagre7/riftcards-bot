@@ -23,13 +23,22 @@ function fmtTime(d: Date): string {
   return timeFmt.format(d);
 }
 
-export function formatEventList(events: Event[]): string {
+// formatEventList renders a temporal window of events as an HTML
+// message. The daysAhead parameter is the size of that window
+// (the same value the /events command passes to the upstream
+// API), used to label the header and the empty state honestly.
+// Without it, an operator setting EVENTS_DAYS_AHEAD=14 would see
+// "next 7 days" in the header even though the window is two
+// weeks.
+export function formatEventList(events: Event[], daysAhead: number): string {
+  const dayLabel = daysAhead === 1 ? '1 day' : `${daysAhead} days`;
+
   if (events.length === 0) {
-    return 'No events found in your area this week.';
+    return `No events found in your area in the next ${dayLabel}.`;
   }
 
   const parts: string[] = [];
-  parts.push('<b>Upcoming Events (next 7 days)</b>');
+  parts.push(`<b>Upcoming Events (next ${dayLabel})</b>`);
   parts.push('');
 
   for (const event of events) {

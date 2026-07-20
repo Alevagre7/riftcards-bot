@@ -59,11 +59,18 @@ export function createCardCommand(deps: CardCommandDeps) {
       return;
     }
 
-    const exact = results.cards.find(
+    // Short-circuit to a direct render only when exactly one card
+    // matches the exact name. If multiple cards share the exact
+    // name (different prints of the same card — base, alt art,
+    // overnumbered), fall through to the multi-version UI so the
+    // user sees all prints. Without this, a search for, say,
+    // "Showstopper" with a base + alt art pairing would hide the
+    // alt art under the rendered base print.
+    const exactMatches = results.cards.filter(
       (c) => c.name.toLowerCase() === query.toLowerCase(),
     );
-    if (exact) {
-      await sendCardPreview(ctx, exact);
+    if (exactMatches.length === 1 && exactMatches[0]) {
+      await sendCardPreview(ctx, exactMatches[0]);
       return;
     }
 
