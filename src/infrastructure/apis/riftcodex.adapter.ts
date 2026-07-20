@@ -320,6 +320,11 @@ export class RiftcodexAdapter implements ICardRepository {
       if (api.metadata.overnumbered != null) {
         (result as { isOvernumbered?: boolean }).isOvernumbered = api.metadata.overnumbered;
       }
+      // `metadata.signature` is the upstream's pre-computed
+      // answer to "is this card a Signature?". See the matching
+      // comment in riftapi-mapper.ts; the data lineage is the
+      // same (the boolean is derived from
+      // cardType.superType containing the `signature` id).
       if (api.metadata.signature != null) {
         (result as { isSignature?: boolean }).isSignature = api.metadata.signature;
       }

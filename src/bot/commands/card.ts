@@ -2,10 +2,7 @@ import { Context, Markup } from 'telegraf';
 import { ICardRepository } from '../../core/ports/card-repository.js';
 import { sendCardPreview } from '../utils/send-card-preview.js';
 import { formatVersionLabel, sortByVersion } from '../formatters/card-label.js';
-
-function stripCommand(text: string, command: string): string {
-  return text.replace(new RegExp(`^/${command}(@\\w+)?\\s*`, 'i'), '').trim();
-}
+import { stripCommand } from '../utils/strip-command.js';
 
 interface CardCommandDeps {
   cardRepository: ICardRepository;

@@ -18,6 +18,7 @@ import { createNewActionHandler } from './bot/actions/new-callback.js';
 import { createLocationPickupHandler } from './bot/handlers/location-pickup.js';
 import { openDatabase } from './infrastructure/persistence/open-database.js';
 import { SqliteUserSettingsRepository } from './infrastructure/persistence/sqlite-user-settings-repository.js';
+import { KM_PER_MILE } from './utils/units.js';
 
 function userId(ctx: Context): string {
   return ctx.from?.username ?? ctx.from?.id?.toString() ?? 'unknown';
@@ -36,8 +37,6 @@ function buildCardRepository(config: ReturnType<typeof loadConfig>): ICardReposi
       return new RiftcodexAdapter({ baseUrl: config.riftcodexBaseUrl!, ...common });
   }
 }
-
-const KM_PER_MILE = 0.621371;
 
 async function main() {
   const config = loadConfig();

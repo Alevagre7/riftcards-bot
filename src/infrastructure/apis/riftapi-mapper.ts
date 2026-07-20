@@ -126,6 +126,14 @@ export function mapRiftapiCardToCard(api: RiftapiCard): import('../../core/entit
     if (api.metadata.overnumbered != null) {
       (result as { isOvernumbered?: boolean }).isOvernumbered = api.metadata.overnumbered;
     }
+    // `metadata.signature` is the riftapi's pre-computed answer
+    // to "is this card a Signature?". The upstream derives the
+    // boolean from `cardType.superType` containing the
+    // `signature` supertype id (see riftapi
+    // docs/IMPLEMENTATION_PLAN.md:141 and docs/research/
+    // playriftbound-card-gallery.md:104). The bot consumes the
+    // pre-computed value rather than re-implementing the check
+    // here; the surface area of the entity stays minimal.
     if (api.metadata.signature != null) {
       (result as { isSignature?: boolean }).isSignature = api.metadata.signature;
     }

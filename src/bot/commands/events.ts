@@ -3,6 +3,8 @@ import { IEventRepository, EventLocation } from '../../core/ports/event-reposito
 import { IUserSettingsRepository } from '../../core/ports/user-settings-repository.js';
 import { formatEventList } from '../formatters/event-formatter.js';
 import { setupFlow } from '../state/setup-flow.js';
+import { stripCommand } from '../utils/strip-command.js';
+import { kmToMiles } from '../../utils/units.js';
 
 interface EventsCommandDeps {
   eventRepository: IEventRepository;
@@ -17,26 +19,18 @@ interface EventsCommandDeps {
   daysAhead: number;
 }
 
-// Subcommand parser. Returns one of three actions:
-//   - 'show'   — `/events` with no args
-//   - 'set'    — `/events set`
-//   - 'clear'  — `/events clear`
-//   - 'usage'  — anything else (printed as a hint)
+// Subcommand parser. Only the two subcommands the spec called for
+// (`/events set`, `/events clear`) are recognised. Empty args fall
+// through to the show action. Anything else prints a usage hint.
 type EventsAction = 'show' | 'set' | 'clear' | 'usage';
 
 function parseAction(rawArgs: string): EventsAction {
   const arg = rawArgs.trim().toLowerCase();
-  if (arg === '' || arg === 'show' || arg === 'list') return 'show';
-  if (arg === 'set' || arg === 'setup' || arg === 'configure') return 'set';
-  if (arg === 'clear' || arg === 'reset' || arg === 'forget') return 'clear';
+  if (arg === '') return 'show';
+  if (arg === 'set') return 'set';
+  if (arg === 'clear') return 'clear';
   return 'usage';
 }
-
-function stripCommand(text: string, command: string): string {
-  return text.replace(new RegExp(`^/${command}(@\\w+)?\\s*`, 'i'), '').trim();
-}
-
-const KM_PER_MILE = 0.621371;
 
 export function createEventsCommand(deps: EventsCommandDeps) {
   return async (ctx: Context) => {
@@ -93,7 +87,6 @@ export function createEventsCommand(deps: EventsCommandDeps) {
 
     const userId = ctx.from?.id;
     let location: EventLocation = deps.defaultLocation;
-    let usingDefault = true;
 
     if (userId != null) {
       const saved = await deps.userSettingsRepository.getLocation(userId);
@@ -102,26 +95,20 @@ export function createEventsCommand(deps: EventsCommandDeps) {
         // default radius (in miles). If the user has not set a
         // radius, we keep the global default.
         const numMiles = saved.radiusKm != null
-          ? saved.radiusKm * KM_PER_MILE
+          ? kmToMiles(saved.radiusKm)
           : deps.defaultLocation.numMiles;
         location = {
           latitude: saved.latitude,
           longitude: saved.longitude,
           numMiles,
         };
-        usingDefault = false;
       }
     }
 
     const now = new Date();
     const end = new Date(now.getTime() + deps.daysAhead * 24 * 60 * 60 * 1000);
     const events = await deps.eventRepository.getEvents(now, end, location);
-    const body = formatEventList(events);
 
-    const reply = usingDefault && events.length > 0
-      ? `${body}\n\n\uD83D\uDCCD Showing the configured default location. Use /events set to use your own.`
-      : body;
-
-    await ctx.reply(reply, { parse_mode: 'HTML' });
+    await ctx.reply(formatEventList(events), { parse_mode: 'HTML' });
   };
 }

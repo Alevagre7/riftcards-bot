@@ -15,7 +15,7 @@
 //     print choice is committed at pick time. Cards without an
 //     image fall back to an article result so we don't drop them.
 
-import { Context, Markup } from 'telegraf';
+import { Context } from 'telegraf';
 import type { InlineQueryResult } from '@telegraf/types';
 import { ICardRepository } from '../core/ports/card-repository.js';
 import { Card } from '../core/entities/card.js';
@@ -102,13 +102,12 @@ export function createInlineQueryHandler(deps: InlineQueryDeps) {
         // get shuffled by Telegram's own ranking.
         is_personal: true,
       });
-    } catch {
+    } catch (error) {
+      // AGENTS.md: "Errors logged, never leaked to users." The
+      // user-facing response is the empty result; we log the
+      // error so the operator can see what broke.
+      console.error('[inline-query] error answering', error);
       await ctx.answerInlineQuery([], { cache_time: 0 });
     }
   };
 }
-
-// Markup is imported to keep the surface consistent with other
-// bot-layer modules that re-export it. Not currently used here
-// because inline results don't have reply_markup.
-void Markup;
