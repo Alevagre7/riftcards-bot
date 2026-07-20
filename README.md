@@ -89,24 +89,52 @@ EXPOSE 8080
 CMD ["node", "dist/index.js"]
 ```
 
-The riftapi (or riftcodex) instance must be reachable from the bot
-container — ensure your network policy allows the connection. The
-following `docker-compose.yml` is a starting point; fill in the
-missing values:
+### Running with Docker Compose
+
+The bot and riftapi can run side by side via docker compose:
 
 ```yaml
 services:
+  api:
+    build: ../riftapi
+    ports:
+      - "18080:8080"
+    environment:
+      - RIFTAPI_DATABASE_PATH=/data/riftapi.db
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
   bot:
     build: .
-    ports:
-      - "8080:8080"
     environment:
-      - TELEGRAM_BOT_TOKEN=your_token
-      - CARD_SOURCE=riftapi
-      - RIFTAPI_BASE_URL=http://riftapi:8080
-      - NODE_ENV=production
-      - WEBHOOK_URL=https://bot.example.com
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      CARD_SOURCE: riftapi
+      RIFTAPI_BASE_URL: http://api:8080
+    depends_on:
+      api:
+        condition: service_healthy
 ```
+
+The `.env` file (with the real `TELEGRAM_BOT_TOKEN`) is gitignored
+and must **never** be committed. Create it from `.env.example` and
+keep it out of version control.
+
+### Polling mode (default)
+
+The bot uses polling mode by default — no `WEBHOOK_URL` is needed.
+This is the simplest setup: the bot connects to Telegram's servers
+and pulls updates. Set `NODE_ENV=development` (or omit it) for
+polling; the `WEBHOOK_URL` variable is only required when running
+in production webhook mode behind a public-facing HTTPS endpoint.
+
+### Card name search
+
+The `/card` command's fuzzy name search hits the
+`/cards/search` endpoint on the riftapi, which runs a
+case-insensitive substring match against card text and names.
 
 ---
 
