@@ -126,4 +126,36 @@ describe('mapRiftapiCardToCard', () => {
     expect(card.id).toBe('ogn-011/11');
     expect(card.collectorNumber).toBe('11');
   });
+
+  it('maps the print-level metadata booleans', () => {
+    const alt = mapRiftapiCardToCard({
+      ...sampleWire,
+      metadata: { ...sampleWire.metadata!, alternate_art: true, overnumbered: false, signature: false },
+    });
+    expect(alt.isAlternateArt).toBe(true);
+    expect(alt.isOvernumbered).toBe(false);
+    expect(alt.isSignature).toBe(false);
+
+    const sig = mapRiftapiCardToCard({
+      ...sampleWire,
+      metadata: { ...sampleWire.metadata!, signature: true },
+    });
+    expect(sig.isSignature).toBe(true);
+  });
+
+  it('maps metadata.updated_on when present', () => {
+    const card = mapRiftapiCardToCard({
+      ...sampleWire,
+      metadata: { ...sampleWire.metadata!, updated_on: '2026-07-20T03:00:00Z' },
+    });
+    expect(card.updatedOn).toBe('2026-07-20T03:00:00Z');
+  });
+
+  it('omits print-level metadata when upstream metadata is null', () => {
+    const card = mapRiftapiCardToCard({ ...sampleWire, metadata: null });
+    expect((card as { isAlternateArt?: boolean }).isAlternateArt).toBeUndefined();
+    expect((card as { isOvernumbered?: boolean }).isOvernumbered).toBeUndefined();
+    expect((card as { isSignature?: boolean }).isSignature).toBeUndefined();
+    expect((card as { updatedOn?: string }).updatedOn).toBeUndefined();
+  });
 });

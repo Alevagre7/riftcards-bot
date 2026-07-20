@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { IEventRepository } from '../../core/ports/event-repository.js';
+import { EventLocation, IEventRepository } from '../../core/ports/event-repository.js';
 import { Event } from '../../core/entities/event.js';
 import { ApiTimeoutError, ApiResponseError } from '../../core/errors/index.js';
 import { DomainError } from '../../core/errors/base-error.js';
@@ -25,11 +25,11 @@ interface EventsAdapterOptions {
   baseUrl: string;
   timeoutMs: number;
   retryAttempts: number;
-  latitude: number;
-  longitude: number;
-  numMiles: number;
 }
 
+// EventsAdapter no longer takes a location in its constructor. The
+// location is per-user now (see ADR-0006) and is supplied at every
+// getEvents() call. The adapter itself is otherwise stateless.
 export class EventsAdapter implements IEventRepository {
   constructor(private options: EventsAdapterOptions) {}
 
@@ -39,16 +39,20 @@ export class EventsAdapter implements IEventRepository {
     return url.toString();
   }
 
-  async getEvents(startAfter: Date, startBefore: Date): Promise<Event[]> {
+  async getEvents(
+    startAfter: Date,
+    startBefore: Date,
+    location: EventLocation,
+  ): Promise<Event[]> {
     const params = new URLSearchParams();
     params.set('start_date_after', startAfter.toISOString());
     params.set('start_date_before', startBefore.toISOString());
     params.set('display_statuses', 'upcoming');
     params.append('display_statuses', 'inProgress');
     params.set('game_slug', 'riftbound');
-    params.set('latitude', String(this.options.latitude));
-    params.set('longitude', String(this.options.longitude));
-    params.set('num_miles', String(this.options.numMiles));
+    params.set('latitude', String(location.latitude));
+    params.set('longitude', String(location.longitude));
+    params.set('num_miles', String(location.numMiles));
     params.set('upcoming_only', 'true');
     params.set('page', '1');
     params.set('page_size', '25');

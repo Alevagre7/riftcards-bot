@@ -1,6 +1,7 @@
 import { Context, Markup } from 'telegraf';
 import { ICardRepository } from '../../core/ports/card-repository.js';
 import { sendCardPreview } from '../utils/send-card-preview.js';
+import { formatVersionLabel, sortByVersion } from '../formatters/card-label.js';
 
 function stripCommand(text: string, command: string): string {
   return text.replace(new RegExp(`^/${command}(@\\w+)?\\s*`, 'i'), '').trim();
@@ -69,13 +70,14 @@ export function createCardCommand(deps: CardCommandDeps) {
       return;
     }
 
-    const buttons = results.cards.map((c) => [
+    const buttons = sortByVersion(results.cards).map((c) => [
       Markup.button.callback(
-        // setCode is stored lowercase; display as uppercase to match
-        // the public_code style (e.g. OGN-011/298). The callback
-        // payload uses c.id (the composite key) so the action
-        // handler can resolve any of the matches.
-        `${c.name} [${c.setCode.toUpperCase()}-${c.collectorNumber}]`,
+        // formatVersionLabel carries the print-level disambiguator
+        // (e.g. `OGN-011 · Alt Art`); the callback payload uses
+        // c.id (the composite key) so the action handler can
+        // resolve any of the matches. See CONTEXT.md → Multi-version
+        // label and the design discussion in ADR-0006.
+        `${c.name} [${formatVersionLabel(c)}]`,
         `card:${c.id}`,
       ),
     ]);

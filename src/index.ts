@@ -5,12 +5,19 @@ import { RiftapiAdapter } from './infrastructure/apis/riftapi.adapter.js';
 import { RiftcodexAdapter } from './infrastructure/apis/riftcodex.adapter.js';
 import { EventsAdapter } from './infrastructure/apis/events.adapter.js';
 import { ICardRepository } from './core/ports/card-repository.js';
+import { IUserSettingsRepository } from './core/ports/user-settings-repository.js';
+import { EventLocation } from './core/ports/event-repository.js';
 import { errorHandler } from './bot/middleware/error-handler.js';
 import { createCardCommand } from './bot/commands/card.js';
 import { createRandomCommand } from './bot/commands/random.js';
 import { createEventsCommand } from './bot/commands/events.js';
+import { createNewCommand } from './bot/commands/new.js';
 import { createInlineQueryHandler } from './bot/inline-query.js';
 import { createCardActionHandler } from './bot/actions/callbacks.js';
+import { createNewActionHandler } from './bot/actions/new-callback.js';
+import { createLocationPickupHandler } from './bot/handlers/location-pickup.js';
+import { openDatabase } from './infrastructure/persistence/open-database.js';
+import { SqliteUserSettingsRepository } from './infrastructure/persistence/sqlite-user-settings-repository.js';
 
 function userId(ctx: Context): string {
   return ctx.from?.username ?? ctx.from?.id?.toString() ?? 'unknown';
@@ -30,19 +37,35 @@ function buildCardRepository(config: ReturnType<typeof loadConfig>): ICardReposi
   }
 }
 
+const KM_PER_MILE = 0.621371;
+
 async function main() {
   const config = loadConfig();
 
   const cardRepository = buildCardRepository(config);
 
+  // The events adapter is now stateless w.r.t. location — the
+  // location is per-call (per-user), passed in by the command
+  // (see ADR-0006). The default location below is what /events
+  // falls back to when the user has not set their own.
   const eventRepository = new EventsAdapter({
     baseUrl: config.eventsApiUrl,
     timeoutMs: config.apiTimeoutMs,
     retryAttempts: config.apiRetryAttempts,
+  });
+  const defaultLocation: EventLocation = {
     latitude: config.eventsLatitude,
     longitude: config.eventsLongitude,
-    numMiles: config.eventsRadiusKm * 0.621371, // km → miles (the upstream takes miles)
-  });
+    numMiles: config.eventsRadiusKm * KM_PER_MILE,
+  };
+
+  // Open the SQLite store and build the user-settings port. The DB
+  // path is env-configurable (USER_SETTINGS_DB_PATH); the path
+  // ':memory:' is reserved for tests. The file is created if it
+  // does not exist; migrations are idempotent.
+  const db = openDatabase(config.userSettingsDbPath);
+  const userSettingsRepository: IUserSettingsRepository =
+    new SqliteUserSettingsRepository(db);
 
   const bot = new Telegraf(config.telegramBotToken);
 
@@ -66,16 +89,29 @@ async function main() {
   bot.telegram.setMyCommands([
     { command: 'card', description: 'Look up a card by name or ID' },
     { command: 'random', description: 'Get a random card' },
-    { command: 'events', description: 'Upcoming events near the configured location' },
+    { command: 'events', description: 'Upcoming events near your saved location' },
+    { command: 'new', description: 'Cards spoiled today (UTC)' },
   ]);
 
   bot.command('card', createCardCommand({ cardRepository }));
   bot.command('random', createRandomCommand({ cardRepository }));
-  bot.command('events', createEventsCommand({ eventRepository }));
+  bot.command('events', createEventsCommand({
+    eventRepository,
+    userSettingsRepository,
+    defaultLocation,
+    daysAhead: config.eventsDaysAhead,
+  }));
+  bot.command('new', createNewCommand({ cardRepository }));
 
   bot.on('inline_query', createInlineQueryHandler({ cardRepository }));
 
+  // Location pickup: any incoming `message.location` while a setup
+  // flow is pending. Registered as a generic message handler so it
+  // fires for non-text messages too.
+  bot.on('message', createLocationPickupHandler({ userSettingsRepository }));
+
   bot.action(/^card:(.+)$/, createCardActionHandler({ cardRepository }));
+  bot.action('new:show-all', createNewActionHandler({ cardRepository }));
 
   if (config.webhookUrl) {
     await bot.launch({

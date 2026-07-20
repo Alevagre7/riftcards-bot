@@ -1,9 +1,77 @@
-import { Context } from 'telegraf';
+// inline-query: the @RiftCardsBot <query> flow.
+//
+// Improvements over the previous version (see the design notes in
+// CONTEXT.md → Inline query and the Round-1 design discussion):
+//
+//  1. Cap raised from 20 → 50 (Telegram's per-query max).
+//  2. Client-side Levenshtein re-ranking on top of the upstream
+//     results, so a fuzzy match outranks a non-match even if the
+//     upstream returned them in the wrong order.
+//  3. Each result's input_message_content is a `photo` so picking
+//     a result delivers the card image directly into the chat
+//     without a follow-up /card round trip. This is what fixes
+//     the "selecting an inline result loses the chosen print"
+//     issue: each result already carries its own image, so the
+//     print choice is committed at pick time. Cards without an
+//     image fall back to an article result so we don't drop them.
+
+import { Context, Markup } from 'telegraf';
 import type { InlineQueryResult } from '@telegraf/types';
 import { ICardRepository } from '../core/ports/card-repository.js';
+import { Card } from '../core/entities/card.js';
+import { formatVersionLabel } from './formatters/card-label.js';
+import { levenshtein } from '../utils/levenshtein.js';
 
 interface InlineQueryDeps {
   cardRepository: ICardRepository;
+}
+
+const RESULT_CAP = 50;
+
+function rankByQuery(cards: Card[], query: string): Card[] {
+  const q = query.toLowerCase();
+  // Use a stable sort to preserve upstream order on ties.
+  return [...cards].sort((a, b) => {
+    const da = levenshtein(q, a.name.toLowerCase());
+    const db = levenshtein(q, b.name.toLowerCase());
+    return da - db;
+  });
+}
+
+function resultForCard(card: Card): InlineQueryResult {
+  const label = formatVersionLabel(card);
+  if (card.imageUrl) {
+    return {
+      type: 'photo',
+      id: card.id,
+      photo_url: card.imageUrl,
+      // thumbnail_url is required by InlineQueryResultPhoto; we
+      // reuse photo_url since the image is the only media.
+      thumbnail_url: card.imageUrl,
+      caption: `<b>${escapeHtml(card.name)}</b> \u00B7 ${escapeHtml(label)}`,
+      parse_mode: 'HTML',
+    };
+  }
+  return {
+    type: 'article',
+    id: card.id,
+    title: card.name,
+    description: `${label} \u2014 ${card.type}`,
+    input_message_content: {
+      // No image: the chosen print has to be re-resolved by the
+      // callback flow, which is what the old behaviour did. We
+      // keep it as a graceful fallback.
+      message_text: `/card ${card.id}`,
+      parse_mode: 'HTML',
+    },
+  };
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
 }
 
 export function createInlineQueryHandler(deps: InlineQueryDeps) {
@@ -17,26 +85,30 @@ export function createInlineQueryHandler(deps: InlineQueryDeps) {
     }
 
     try {
+      // Fetch more than the cap so the re-rank has room to work.
       const result = await deps.cardRepository.searchCards({
         query,
-        limit: 20,
+        limit: RESULT_CAP,
       });
 
-      const inlineResults = result.cards.slice(0, 20).map((card) => ({
-        type: 'article' as const,
-        id: card.id,
-        title: card.name,
-        description: `${card.setCode.toUpperCase()}-${card.collectorNumber} \u2014 ${card.type}`,
-        thumb_url: card.imageUrl,
-        input_message_content: {
-          message_text: `/card ${card.name}`,
-          parse_mode: 'HTML' as const,
-        },
-      }));
+      const ranked = rankByQuery(result.cards, query).slice(0, RESULT_CAP);
+      const inlineResults = ranked.map(resultForCard);
 
-      await ctx.answerInlineQuery(inlineResults as InlineQueryResult[], { cache_time: 300 });
+      // cache_time 0 keeps results fresh — the inline cache can
+      // outlive a /new wave and the user would see stale spoilers.
+      await ctx.answerInlineQuery(inlineResults, {
+        cache_time: 0,
+        // `is_personal` so the result order (Levenshtein) does not
+        // get shuffled by Telegram's own ranking.
+        is_personal: true,
+      });
     } catch {
       await ctx.answerInlineQuery([], { cache_time: 0 });
     }
   };
 }
+
+// Markup is imported to keep the surface consistent with other
+// bot-layer modules that re-export it. Not currently used here
+// because inline results don't have reply_markup.
+void Markup;

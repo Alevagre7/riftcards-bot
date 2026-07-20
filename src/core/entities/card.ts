@@ -33,4 +33,11 @@ export interface Card {
   readonly artist?: string;
   readonly imageUrl?: string;
   readonly riftboundId?: string;
+  // Print-level metadata. See CONTEXT.md (Signature, Spoiler) and
+  // ADR-0006 for the persistence model. The first three distinguish
+  // prints; updatedOn drives the /new command.
+  readonly isAlternateArt?: boolean;
+  readonly isOvernumbered?: boolean;
+  readonly isSignature?: boolean;
+  readonly updatedOn?: string;
 }

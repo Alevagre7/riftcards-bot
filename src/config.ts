@@ -28,12 +28,19 @@ const configSchema = z.object({
 
   // Events adapter. Defaults to Seville (37.39, -5.99) at 50 mi /
   // 7 days; the EVENTS_API_URL defaults to the upstream directly
-  // (the Cloudflare Worker proxy is gone).
+  // (the Cloudflare Worker proxy is gone). The lat/lon/radius here
+  // are the global default used when a user has not configured
+  // their own location via /events set. See ADR-0006.
   eventsApiUrl: z.string().url().default('https://api.cloudflare.riftbound.uvsgames.com'),
   eventsLatitude: z.coerce.number().default(37.39),
   eventsLongitude: z.coerce.number().default(-5.99),
   eventsRadiusKm: z.coerce.number().default(80), // 50 miles
   eventsDaysAhead: z.coerce.number().default(7),
+
+  // Per-user settings store (see ADR-0006). Path is a file path; in
+  // tests the loader can be bypassed and the path set to ':memory:'
+  // directly via SqliteUserSettingsRepository + openDatabase.
+  userSettingsDbPath: z.string().default('/data/riftbot.db'),
 });
 
 export type Config = z.infer<typeof configSchema>;
@@ -61,6 +68,7 @@ export function loadConfig(): Config {
     eventsLongitude: process.env['EVENTS_LONGITUDE'],
     eventsRadiusKm: process.env['EVENTS_RADIUS_KM'],
     eventsDaysAhead: process.env['EVENTS_DAYS_AHEAD'],
+    userSettingsDbPath: process.env['USER_SETTINGS_DB_PATH'],
   });
 
   // Conditional required vars: the chosen adapter's base URL must be

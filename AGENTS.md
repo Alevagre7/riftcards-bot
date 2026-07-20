@@ -122,8 +122,57 @@ export interface ICardRepository {
 
 import { Event } from '../entities/event';
 
+// The location is per-call (per-user). The EventsAdapter takes
+// the location out of the constructor and receives it on every
+// getEvents() call so the /events command can use the caller's
+// saved location while the global default remains the fallback.
+// See ADR-0006.
+export interface EventLocation {
+  readonly latitude: number;
+  readonly longitude: number;
+  // The upstream events API takes a radius in statute miles, so
+  // the unit is encoded in the field name to avoid km/mile
+  // conversion bugs at the call sites.
+  readonly numMiles: number;
+}
+
 export interface IEventRepository {
-  getEvents(startAfter: Date, startBefore: Date): Promise<Event[]>;
+  getEvents(
+    startAfter: Date,
+    startBefore: Date,
+    location: EventLocation,
+  ): Promise<Event[]>;
+}
+```
+
+### IUserSettingsRepository
+```typescript
+// src/core/ports/user-settings-repository.ts
+//
+// The bot's per-TelegramUser settings store. The first setting
+// is the user's saved location for /events. Future settings
+// (favourites, history, /new filters) can extend this port with
+// new methods or be split into a new repository. The current
+// adapter is SQLite (see ADR-0006) and lives at
+// src/infrastructure/persistence/.
+
+export interface UserLocation {
+  readonly telegramId: number;
+  readonly latitude: number;
+  readonly longitude: number;
+  // null = use the global EVENTS_RADIUS_KM env default. Not
+  // currently written by the v1 /events set flow.
+  readonly radiusKm: number | null;
+  readonly updatedAt: string;
+}
+
+export interface IUserSettingsRepository {
+  getLocation(telegramId: number): Promise<UserLocation | null>;
+  setLocation(
+    telegramId: number,
+    location: { latitude: number; longitude: number; radiusKm?: number | null },
+  ): Promise<void>;
+  clearLocation(telegramId: number): Promise<void>;
 }
 ```
 
@@ -145,12 +194,20 @@ export interface Card {
   readonly might?: number;
   readonly power?: number;
   readonly text?: string;
-  readonly flavorText?: string;
   readonly keywords: readonly string[];
   readonly artist?: string;
   readonly imageUrl?: string;
   readonly riftboundId?: string;
-  readonly tcgplayerId?: string;
+  // Print-level metadata. isAlternateArt / isOvernumbered drive
+  // the multi-version button label (see card-label.ts). updatedOn
+  // drives the /new command (Spoiler = metadata.updated_on in
+  // the current UTC calendar day). isSignature is a card-level
+  // type, not a print-level variant — it is intentionally absent
+  // from the multi-version label.
+  readonly isAlternateArt?: boolean;
+  readonly isOvernumbered?: boolean;
+  readonly isSignature?: boolean;
+  readonly updatedOn?: string;
 }
 
 // src/core/entities/event.ts
@@ -198,22 +255,41 @@ async function main() {
 
   const cardRepository = buildCardRepository(config);
 
+  // EventsAdapter is now stateless w.r.t. location (see ADR-0006).
+  // The default location is the global fallback for /events when
+  // the caller has not configured their own.
   const eventRepository = new EventsAdapter({
     baseUrl: config.eventsApiUrl,
     timeoutMs: config.apiTimeoutMs,
     retryAttempts: config.apiRetryAttempts,
+  });
+  const defaultLocation: EventLocation = {
     latitude: config.eventsLatitude,
     longitude: config.eventsLongitude,
     numMiles: config.eventsRadiusKm * 0.621371,
-  });
+  };
+
+  // Per-user settings store (see ADR-0006). Open the SQLite DB,
+  // build the port. The path is env-configurable; ':memory:' is
+  // reserved for tests.
+  const db = openDatabase(config.userSettingsDbPath);
+  const userSettingsRepository = new SqliteUserSettingsRepository(db);
 
   const bot = new Telegraf(config.telegramBotToken);
 
   bot.command('card', createCardCommand({ cardRepository }));
   bot.command('random', createRandomCommand({ cardRepository }));
-  bot.command('events', createEventsCommand({ eventRepository }));
+  bot.command('events', createEventsCommand({
+    eventRepository,
+    userSettingsRepository,
+    defaultLocation,
+    daysAhead: config.eventsDaysAhead,
+  }));
+  bot.command('new', createNewCommand({ cardRepository }));
   bot.on('inline_query', createInlineQueryHandler({ cardRepository }));
+  bot.on('message', createLocationPickupHandler({ userSettingsRepository }));
   bot.action(/^card:(.+)$/, createCardActionHandler({ cardRepository }));
+  bot.action('new:show-all', createNewActionHandler({ cardRepository }));
 
   if (config.nodeEnv === 'production') {
     await bot.launch({ webhook: { domain: config.webhookUrl!, port: config.port } });
@@ -387,6 +463,7 @@ export function loadConfig(): Config {
 | `EVENTS_LONGITUDE` | No | `-5.99` |
 | `EVENTS_RADIUS_KM` | No | `80` |
 | `EVENTS_DAYS_AHEAD` | No | `7` |
+| `USER_SETTINGS_DB_PATH` | No | `/data/riftbot.db` |
 
 ---
 
@@ -424,11 +501,14 @@ npm run dev
 | Command | Expected |
 |---------|----------|
 | `/card Flameblade` | Single match → image + name |
-| `/card ahri` | Multiple matches → buttons |
+| `/card ahri` | Multiple matches → buttons (print-level disambiguators) |
 | `/card ogn-011` | ID lookup → image + name |
 | `/random` | Random card |
-| `/events` | Upcoming events near the configured location |
-| `@RiftCardsBot ahri` | Inline list with thumbnails |
+| `/events` | Upcoming events at the caller's saved location (or the global default) |
+| `/events set` | Prompts for a location pin; saves the next pin to the caller's settings |
+| `/events clear` | Forgets the saved location |
+| `/new` | Cards updated today (UTC); MediaGroup if ≤10, else 5 + Show-all button |
+| `@RiftCardsBot ahri` | Inline list with thumbnails (re-ranked by Levenshtein, photo result type) |
 
 ---
 
@@ -442,7 +522,9 @@ The bot ships with a Dockerfile. Deploy via any Docker host with the following:
    ```bash
    docker build -t riftcards-bot .
    ```
-2. Run with the required env vars:
+2. Run with the required env vars. The bot now persists per-user
+   settings to a SQLite file — mount a named volume at `/data`
+   so saved locations survive restarts and image rebuilds:
    ```bash
    docker run -d --name riftcards-bot \
      -e TELEGRAM_BOT_TOKEN=... \
@@ -450,6 +532,7 @@ The bot ships with a Dockerfile. Deploy via any Docker host with the following:
      -e RIFTAPI_BASE_URL=http://riftapi:8080 \
      -e NODE_ENV=production \
      -e WEBHOOK_URL=https://your-app.example.com \
+     -v riftbot-data:/data \
      -p 8080:8080 \
      riftcards-bot
    ```

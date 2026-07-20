@@ -310,6 +310,20 @@ export class RiftcodexAdapter implements ICardRepository {
     if (riftboundId) {
       (result as { riftboundId?: string }).riftboundId = riftboundId;
     }
+    if (api.metadata) {
+      if (api.metadata.updated_on != null) {
+        (result as { updatedOn?: string }).updatedOn = api.metadata.updated_on;
+      }
+      if (api.metadata.alternate_art != null) {
+        (result as { isAlternateArt?: boolean }).isAlternateArt = api.metadata.alternate_art;
+      }
+      if (api.metadata.overnumbered != null) {
+        (result as { isOvernumbered?: boolean }).isOvernumbered = api.metadata.overnumbered;
+      }
+      if (api.metadata.signature != null) {
+        (result as { isSignature?: boolean }).isSignature = api.metadata.signature;
+      }
+    }
     return result;
   }
 
