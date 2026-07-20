@@ -15,6 +15,7 @@ import { createNewCommand } from './bot/commands/new.js';
 import { createInlineQueryHandler } from './bot/inline-query.js';
 import { createCardActionHandler } from './bot/actions/callbacks.js';
 import { createNewActionHandler } from './bot/actions/new-callback.js';
+import { createEventActionHandler } from './bot/actions/event-callback.js';
 import { createLocationPickupHandler } from './bot/handlers/location-pickup.js';
 import { openDatabase } from './infrastructure/persistence/open-database.js';
 import { SqliteUserSettingsRepository } from './infrastructure/persistence/sqlite-user-settings-repository.js';
@@ -111,6 +112,12 @@ async function main() {
 
   bot.action(/^card:(.+)$/, createCardActionHandler({ cardRepository }));
   bot.action('new:show-all', createNewActionHandler({ cardRepository }));
+  bot.action(/^event:(.+)$/, createEventActionHandler({
+    eventRepository,
+    userSettingsRepository,
+    defaultLocation,
+    daysAhead: config.eventsDaysAhead,
+  }));
 
   if (config.webhookUrl) {
     await bot.launch({

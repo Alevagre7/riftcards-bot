@@ -28,7 +28,22 @@ A group of Cards released together as a single product. Defined at
 **Event**:
 An upcoming Riftbound tournament at a physical store. Defined at
 `src/core/entities/event.ts`. Fetched from the upstream events API via
-`EventsAdapter`; the bot's `/events` command renders a temporal window.
+`EventsAdapter`; the bot's `/events` command renders a temporal window,
+and each individual event can be viewed as an **Event detail view**.
+
+**Event detail view**:
+The message rendered in-place when a TelegramUser taps an inline button on
+an Event list view. Includes the Event's date, time, store, address,
+capacity, format, category, meeting type, cost, and the list of registered
+players fetched from a separate upstream endpoint. *Avoid*: "event page"
+(that's the upstream Locator URL).
+
+**Locator URL**:
+The canonical web URL for an Event,
+`https://locator.riftbound.uvsgames.com/events/<id>`, derived from the
+upstream numeric Event id. Surfaced in the Event detail view. *Avoid*:
+"event URL" (ambiguous with callback data), "share link" (Telegram term,
+overloaded with t.me links).
 
 **Signature**:
 A Card whose `cardType.superType` includes the `signature` supertype id
@@ -104,7 +119,10 @@ A Telegraf slash handler. Three commands exist, registered in
 `src/index.ts`:
 - `/card <name or ID>` — look up a card and send a preview.
 - `/random` — send a random card preview.
-- `/events` — list upcoming events near the configured location.
+- `/events [<N>]` — list upcoming events (next N days, default 7) near
+  the configured location.
+- `/events set` — share a location pin to save your own location.
+- `/events clear` — forget your saved location.
 
 Each command factory takes its repository dependencies (constructor
 injection); wiring happens in `src/index.ts`. *Avoid*: "Handler" (a
@@ -122,6 +140,12 @@ Triggered when a user taps an inline keyboard button whose data starts
 with `card:`; the handler parses the composite id and sends the card
 preview. *Avoid*: "Action" (Telegraf uses "callback query"; the file is
 named `callbacks.ts`).
+
+**Event callback**:
+The `event:{id}` / `event:list` / `event:list:show-all` button actions.
+Defined at `src/bot/actions/event-callback.ts`. Triggered when a user taps
+an inline keyboard button in the Events list or detail view; the handler
+dispatches to the appropriate render function in `src/bot/commands/events.ts`.
 
 ## Configuration
 

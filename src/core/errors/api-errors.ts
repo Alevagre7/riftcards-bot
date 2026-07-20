@@ -12,8 +12,10 @@ export class ApiTimeoutError extends DomainError {
 export class ApiResponseError extends DomainError {
   readonly code = 'API_ERROR';
   readonly isUserFacing = false;
+  readonly body: string | undefined;
 
-  constructor(service: string, statusCode: number) {
-    super(`${service} API returned status ${statusCode}`);
+  constructor(service: string, statusCode: number, body?: string) {
+    super(`${service} API returned status ${statusCode}${body ? `: ${body}` : ''}`);
+    this.body = body;
   }
 }

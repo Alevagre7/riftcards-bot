@@ -1,4 +1,5 @@
 import { Event } from '../entities/event.js';
+import { EventRegistration } from '../entities/event-registration.js';
 
 // EventLocation is the per-call location passed to IEventRepository.
 // The location may come from the user's saved preference, the global
@@ -19,4 +20,14 @@ export interface IEventRepository {
     startBefore: Date,
     location: EventLocation,
   ): Promise<Event[]>;
+
+  getEventById(
+    id: string,
+    location: EventLocation,
+  ): Promise<Event | null>;
+
+  getEventRegistrations(
+    id: string,
+    location: EventLocation,
+  ): Promise<EventRegistration[]>;
 }
