@@ -1,5 +1,5 @@
 {
-  "name": "riftbound-card-tracker",
+  "name": "riftcards-bot",
   "version": "0.2.0",
   "description": "Telegram bot for Riftbound card data, backed by the self-hosted riftapi.",
   "repository": {
