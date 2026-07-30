@@ -1,13 +1,15 @@
 import { Context, Markup } from 'telegraf';
+import { Event } from '../../core/entities/event.js';
 import { IEventRepository, EventLocation } from '../../core/ports/event-repository.js';
 import { IUserSettingsRepository } from '../../core/ports/user-settings-repository.js';
+import { ILocatorRepository } from '../../core/ports/locator-repository.js';
+import { IEventWatchRepository } from '../../core/ports/event-watch-repository.js';
 import { formatEventList } from '../formatters/event-list-formatter.js';
 import { formatEventDetail } from '../formatters/event-detail-formatter.js';
 import { setupFlow } from '../state/setup-flow.js';
+import { eventsPaginationState } from '../state/events-pagination-state.js';
 import { stripCommand } from '../utils/strip-command.js';
 import { kmToMiles } from '../../utils/units.js';
-
-const SHOW_ALL_CHUNK_SIZE = 8;
 
 // ---------------------------------------------------------------------------
 // Deps interface
@@ -25,6 +27,8 @@ export interface EventsCommandDeps {
   // existing CLI; env-overridable via EVENTS_DAYS_AHEAD.
   daysAhead: number;
   // Optional: override Date.now() for testability.
+  locatorRepository?: ILocatorRepository;
+  watchRepository?: IEventWatchRepository;
   now?: () => Date;
 }
 
@@ -70,24 +74,15 @@ export async function renderEventList(
   const end = new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
   const events = await deps.eventRepository.getEvents(now, end, location);
 
-  const { body, buttons } = formatEventList(events, days);
+  // Sort by startDate ascending
+  const sorted = [...events].sort((a, b) => a.startDate.getTime() - b.startDate.getTime());
 
-  if (buttons.length === 0) {
-    await ctx.reply(body, { parse_mode: 'HTML' });
-    return;
+  // Store in pagination state for Prev/Next navigation
+  if (userId != null) {
+    eventsPaginationState.set(userId, sorted, days);
   }
 
-  const keyboard = Markup.inlineKeyboard(
-    buttons.map((row) => row.map((b) => Markup.button.callback(b.label, b.callbackData))),
-  );
-
-  // When called from a callback (Back action), edit the current message;
-  // when called from the /events command, send a new message.
-  if (ctx.callbackQuery && ctx.callbackQuery.message) {
-    await ctx.editMessageText(body, { parse_mode: 'HTML', ...keyboard });
-  } else {
-    await ctx.reply(body, { parse_mode: 'HTML', ...keyboard });
-  }
+  await renderEventListWithPage(ctx, deps, sorted, days, 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -118,26 +113,87 @@ export async function renderEventDetail(
     return;
   }
 
-  const body = formatEventDetail(event, registrations);
-  const keyboard = Markup.inlineKeyboard([
-    [Markup.button.callback('\u2190 Back to list', 'event:list')],
-  ]);
+  const result = formatEventDetail(event, registrations, {
+    privateChat: ctx.chat?.type === 'private',
+  });
 
   // Always edit in place (called from a callback)
-  await ctx.editMessageText(body, { parse_mode: 'HTML', ...keyboard });
+  await ctx.editMessageText(result.body, {
+    parse_mode: 'HTML',
+    reply_markup: { inline_keyboard: result.buttons },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// renderEventListWithPage — internal helper that builds and sends/edits a
+// specific page of events. Used by renderEventList and renderEventsPage.
+// ---------------------------------------------------------------------------
+
+async function renderEventListWithPage(
+  ctx: Context,
+  deps: EventsCommandDeps,
+  sorted: readonly Event[],
+  days: number,
+  page: number,
+): Promise<void> {
+  const { body, buttons } = formatEventList(sorted, days, page, 8);
+
+  if (buttons.length === 0) {
+    await ctx.reply(body, { parse_mode: 'HTML' });
+    return;
+  }
+
+  const keyboard = Markup.inlineKeyboard(
+    buttons.map((row) => row.map((b) => Markup.button.callback(b.label, b.callbackData))),
+  );
+
+  if (ctx.callbackQuery && ctx.callbackQuery.message) {
+    await ctx.editMessageText(body, { parse_mode: 'HTML', ...keyboard });
+  } else {
+    await ctx.reply(body, { parse_mode: 'HTML', ...keyboard });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// renderEventsPage — Called from the Prev/Next callback. Reads stored
+// pagination state and renders the requested page. Falls back to refetch
+// if the state expired.
+// ---------------------------------------------------------------------------
+
+export async function renderEventsPage(
+  ctx: Context,
+  deps: EventsCommandDeps,
+  page: number,
+): Promise<void> {
+  const userId = ctx.from?.id;
+  if (userId == null) return;
+
+  const state = eventsPaginationState.get(userId);
+  if (!state) {
+    // State expired or never set — refetch and re-render from page 0.
+    await renderEventList(ctx, deps, deps.daysAhead);
+    return;
+  }
+
+  // Clamp to valid range
+  const totalPages = Math.ceil(state.events.length / 8);
+  const clampedPage = Math.max(0, Math.min(page, totalPages - 1));
+
+  await renderEventListWithPage(ctx, deps, state.events, state.daysAhead, clampedPage);
 }
 
 // ---------------------------------------------------------------------------
 // Subcommand parser
 // ---------------------------------------------------------------------------
 
-type EventsAction = 'show' | 'set' | 'clear' | 'usage';
+type EventsAction = 'show' | 'set' | 'clear' | 'unwatch' | 'usage';
 
 function parseAction(rawArgs: string): EventsAction {
   const arg = rawArgs.trim().toLowerCase();
   if (arg === '') return 'show';
   if (arg === 'set') return 'set';
   if (arg === 'clear') return 'clear';
+  if (arg === 'unwatch') return 'unwatch';
   return 'usage';
 }
 
@@ -160,7 +216,8 @@ export function createEventsCommand(deps: EventsCommandDeps) {
           '/events \u2014 upcoming events at your location (default 7 days)\n' +
           '/events &lt;N&gt; \u2014 upcoming events in the next N days\n' +
           '/events set \u2014 share your location (or use the Share button)\n' +
-          '/events clear \u2014 forget your saved location',
+          '/events clear \u2014 forget your saved location\n' +
+          '/events unwatch \u2014 stop watching the current event',
       );
       return;
     }
@@ -175,6 +232,19 @@ export function createEventsCommand(deps: EventsCommandDeps) {
       const userId = ctx.from?.id;
       if (userId != null) {
         setupFlow.start(userId, 'events-set-location');
+      }
+      return;
+    }
+
+    if (action === 'unwatch') {
+      const userId = ctx.from?.id;
+      if (userId != null && deps.watchRepository) {
+        await deps.watchRepository.delete(userId);
+        await ctx.reply('Watcher stopped.');
+      } else if (userId == null) {
+        await ctx.reply('Could not identify your account. Please try again.');
+      } else {
+        await ctx.reply('Watch service not available.');
       }
       return;
     }
@@ -209,34 +279,3 @@ export function createEventsCommand(deps: EventsCommandDeps) {
   };
 }
 
-// ---------------------------------------------------------------------------
-// sendShowAllMessages — renders the full event list as multiple text
-// messages, each with up to SHOW_ALL_CHUNK_SIZE inline buttons, no body
-// text (a single space is used as Telegram requires non-empty text).
-// Exported so the callback handler can use it.
-// ---------------------------------------------------------------------------
-
-export async function sendShowAllMessages(
-  ctx: Context,
-  deps: EventsCommandDeps,
-): Promise<void> {
-  await ctx.sendChatAction('typing');
-
-  const userId = ctx.from?.id;
-  const location = await resolveLocation(userId, deps);
-
-  const now = deps.now ? deps.now() : new Date();
-  const end = new Date(now.getTime() + deps.daysAhead * 24 * 60 * 60 * 1000);
-  const events = await deps.eventRepository.getEvents(now, end, location);
-
-  // Sort by startDate ascending
-  const sorted = [...events].sort((a, b) => a.startDate.getTime() - b.startDate.getTime());
-
-  for (let i = 0; i < sorted.length; i += SHOW_ALL_CHUNK_SIZE) {
-    const chunk = sorted.slice(i, i + SHOW_ALL_CHUNK_SIZE);
-    const buttons = chunk.map((ev) => [
-      Markup.button.callback(`\uD83D\uDCC5 ${ev.name}`, `event:${ev.id}`),
-    ]);
-    await ctx.reply('\u200B', Markup.inlineKeyboard(buttons));
-  }
-}

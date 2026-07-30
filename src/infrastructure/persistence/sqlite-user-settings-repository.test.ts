@@ -76,6 +76,53 @@ describe('SqliteUserSettingsRepository (in-memory)', () => {
   });
 });
 
+describe('SqliteUserSettingsRepository — nexus username', () => {
+  let db: Database.Database;
+  let repo: SqliteUserSettingsRepository;
+
+  beforeEach(() => {
+    db = openDatabase(':memory:');
+    repo = new SqliteUserSettingsRepository(db);
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it('returns null when the user has no saved nexus username', async () => {
+    expect(await repo.getNexusUsername(123)).toBeNull();
+  });
+
+  it('round-trips a nexus username', async () => {
+    await repo.setNexusUsername(42, 'riftbound_player');
+    const stored = await repo.getNexusUsername(42);
+    expect(stored).toBe('riftbound_player');
+  });
+
+  it('clearNexusUsername removes the row', async () => {
+    await repo.setNexusUsername(1, 'player_one');
+    await repo.clearNexusUsername(1);
+    expect(await repo.getNexusUsername(1)).toBeNull();
+  });
+
+  it('clearNexusUsername is a no-op for an unknown user', async () => {
+    await expect(repo.clearNexusUsername(999)).resolves.toBeUndefined();
+  });
+
+  it('keeps separate user nexus usernames isolated', async () => {
+    await repo.setNexusUsername(1, 'player_a');
+    await repo.setNexusUsername(2, 'player_b');
+    expect(await repo.getNexusUsername(1)).toBe('player_a');
+    expect(await repo.getNexusUsername(2)).toBe('player_b');
+  });
+
+  it('overwrites an existing nexus username on a second set', async () => {
+    await repo.setNexusUsername(1, 'old_name');
+    await repo.setNexusUsername(1, 'new_name');
+    expect(await repo.getNexusUsername(1)).toBe('new_name');
+  });
+});
+
 describe('openDatabase (file-backed)', () => {
   let dir: string;
 

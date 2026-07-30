@@ -23,4 +23,8 @@ export interface IUserSettingsRepository {
     location: { latitude: number; longitude: number; radiusKm?: number | null },
   ): Promise<void>;
   clearLocation(telegramId: number): Promise<void>;
+
+  getNexusUsername(telegramId: number): Promise<string | null>;
+  setNexusUsername(telegramId: number, username: string): Promise<void>;
+  clearNexusUsername(telegramId: number): Promise<void>;
 }

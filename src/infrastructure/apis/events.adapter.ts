@@ -16,10 +16,10 @@ const EventApiSchema = z.object({
   start_datetime: z.string(),
   end_datetime: z.string(),
   store: z.object({
-    name: z.string().optional().default(''),
-    full_address: z.string().optional().default(''),
-    website: z.string().optional().default(''),
-    email: z.string().optional().default(''),
+    name: z.string().nullable().optional().default(''),
+    full_address: z.string().nullable().optional().default(''),
+    website: z.string().nullable().optional().default(''),
+    email: z.string().nullable().optional().default(''),
   }).nullable().optional(),
   gameplay_format: z.object({
     name: z.string().optional().default(''),
@@ -59,6 +59,21 @@ function buildLocatorUrl(id: string): string {
   return `https://locator.riftbound.uvsgames.com/events/${id}`;
 }
 
+function normalizeRegistrationStatus(raw: string): string {
+  switch (raw) {
+    case 'COMPLETE':
+      return 'Registered';
+    case 'PENDING':
+      return 'Pending';
+    case 'CANCELLED':
+      return 'Cancelled';
+    case 'WAITLIST':
+      return 'Waitlist';
+    default:
+      return raw;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Mapper
 // ---------------------------------------------------------------------------
@@ -85,6 +100,12 @@ function mapApiEvent(api: z.infer<typeof EventApiSchema>): Event {
     costAmount: api.cost_in_cents === 0 ? null : api.cost_in_cents / 100,
     costCurrency: api.currency ?? '',
     locatorUrl: buildLocatorUrl(String(api.id)),
+    eventType: '',
+    price: '',
+    description: '',
+    imageUrl: '',
+    externalUrl: null,
+    locatorEventId: api.id,
   };
 }
 
@@ -134,7 +155,7 @@ export class EventsAdapter implements IEventRepository {
     params.set('game_slug', 'riftbound');
     params.set('latitude', String(location.latitude));
     params.set('longitude', String(location.longitude));
-    params.set('num_miles', String(location.numMiles));
+    params.set('num_miles', String(Math.round(location.numMiles)));
     params.set('upcoming_only', 'true');
     params.set('page', '1');
     params.set('page_size', '25');
@@ -162,6 +183,30 @@ export class EventsAdapter implements IEventRepository {
       return parsed.results.map(mapApiEvent);
     } catch (error) {
       if (error instanceof DomainError) throw error;
+
+      // Log the actual error before masking — the catch block swallows
+      // the original cause, which is why the previous deployment's
+      // "timeout" message was untrustworthy.
+      console.error(`[Events API] getEvents error:`, error);
+
+      // AbortError is the real timeout signal from AbortController
+      // (see src/utils/api-client.ts — setTimeout → controller.abort()).
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new ApiTimeoutError('Events API');
+      }
+
+      // ZodError means the upstream changed its response shape; the
+      // request succeeded but parsing failed. Surface as 502-style
+      // ApiResponseError (not a user-facing "timeout" — that would
+      // mislead both the user and the operator reading the logs).
+      if (error instanceof z.ZodError) {
+        const snippet = error.message.slice(0, 200);
+        throw new ApiResponseError('Events API', 502, `Schema parse failed: ${snippet}`);
+      }
+
+      // Network/DNS/other failures — still report as timeout to the
+      // user (the symptom is the same: no response), but the log line
+      // above carries the real cause.
       throw new ApiTimeoutError('Events API');
     }
   }
@@ -192,6 +237,30 @@ export class EventsAdapter implements IEventRepository {
       return mapApiEvent(parsed);
     } catch (error) {
       if (error instanceof DomainError) throw error;
+
+      // Log the actual error before masking — the catch block swallows
+      // the original cause, which is why the previous deployment's
+      // "timeout" message was untrustworthy.
+      console.error(`[Events API] getEventById error:`, error);
+
+      // AbortError is the real timeout signal from AbortController
+      // (see src/utils/api-client.ts — setTimeout → controller.abort()).
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new ApiTimeoutError('Events API');
+      }
+
+      // ZodError means the upstream changed its response shape; the
+      // request succeeded but parsing failed. Surface as 502-style
+      // ApiResponseError (not a user-facing "timeout" — that would
+      // mislead both the user and the operator reading the logs).
+      if (error instanceof z.ZodError) {
+        const snippet = error.message.slice(0, 200);
+        throw new ApiResponseError('Events API', 502, `Schema parse failed: ${snippet}`);
+      }
+
+      // Network/DNS/other failures — still report as timeout to the
+      // user (the symptom is the same: no response), but the log line
+      // above carries the real cause.
       throw new ApiTimeoutError('Events API');
     }
   }
@@ -220,10 +289,34 @@ export class EventsAdapter implements IEventRepository {
       const parsed = EventRegistrationsResponseSchema.parse(json);
       return parsed.results.map((item) => ({
         name: item.best_identifier ?? '',
-        status: item.registration_status ?? '',
+        status: normalizeRegistrationStatus(item.registration_status ?? ''),
       }));
     } catch (error) {
       if (error instanceof DomainError) throw error;
+
+      // Log the actual error before masking — the catch block swallows
+      // the original cause, which is why the previous deployment's
+      // "timeout" message was untrustworthy.
+      console.error(`[Events API] getEventRegistrations error:`, error);
+
+      // AbortError is the real timeout signal from AbortController
+      // (see src/utils/api-client.ts — setTimeout → controller.abort()).
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new ApiTimeoutError('Events API');
+      }
+
+      // ZodError means the upstream changed its response shape; the
+      // request succeeded but parsing failed. Surface as 502-style
+      // ApiResponseError (not a user-facing "timeout" — that would
+      // mislead both the user and the operator reading the logs).
+      if (error instanceof z.ZodError) {
+        const snippet = error.message.slice(0, 200);
+        throw new ApiResponseError('Events API', 502, `Schema parse failed: ${snippet}`);
+      }
+
+      // Network/DNS/other failures — still report as timeout to the
+      // user (the symptom is the same: no response), but the log line
+      // above carries the real cause.
       throw new ApiTimeoutError('Events API');
     }
   }

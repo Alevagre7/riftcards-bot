@@ -15,4 +15,11 @@ export interface Event {
   readonly costAmount: number | null;
   readonly costCurrency: string;
   readonly locatorUrl: string;
+  // riftfound-specific fields (set to defaults by the old-API mapper)
+  readonly eventType: string;
+  readonly price: string;
+  readonly description: string;
+  readonly imageUrl: string;
+  readonly externalUrl: string | null;
+  readonly locatorEventId?: number;
 }

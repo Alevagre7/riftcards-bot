@@ -1,13 +1,19 @@
+// Pickup handlers for bot setup flows.
+//
 // createLocationPickupHandler: handles a `message.location` from a
 // user who is mid-setup. The flow is owned by SetupFlow; this
 // handler just consumes the pending state and writes to the
 // persistent store. The only flow supported today is
 // `events-set-location`; the switch leaves room for future flows
 // without an interface change.
+//
+// createNexusUsernamePickupHandler: sibling for `mytable-set-username`
+// flow — reads the next non-command text message as a Nexus username.
 
 import { Context, Markup } from 'telegraf';
 import { IUserSettingsRepository } from '../../core/ports/user-settings-repository.js';
 import { setupFlow } from '../state/setup-flow.js';
+import { NEXUS_USERNAME_RE } from '../utils/nexus-username.js';
 
 interface LocationPickupDeps {
   userSettingsRepository: IUserSettingsRepository;
@@ -37,13 +43,48 @@ export function createLocationPickupHandler(deps: LocationPickupDeps) {
     switch (flow) {
       case 'events-set-location': {
         const { latitude, longitude } = message.location;
-        await deps.userSettingsRepository.setLocation(userId, { latitude, longitude });
+        await deps.userSettingsRepository.setLocation(userId, {
+          latitude,
+          longitude,
+          radiusKm: 80,
+        });
         await ctx.reply(
-          `Location saved (\uD83D\uDCCD ${latitude.toFixed(4)}, ${longitude.toFixed(4)}). Use /events to see upcoming events.`,
+          'Location saved! Use /events to find upcoming events near you.',
           Markup.removeKeyboard(),
         );
         return;
       }
     }
+  };
+}
+
+interface NexusUsernamePickupDeps {
+  userSettingsRepository: IUserSettingsRepository;
+}
+
+export function createNexusUsernamePickupHandler(deps: NexusUsernamePickupDeps) {
+  return async (ctx: Context) => {
+    const message = ctx.message as { text?: string } | undefined;
+    if (!message || !message.text) return;
+
+    const userId = ctx.from?.id;
+    if (userId == null) return;
+
+    const flow = setupFlow.consume(userId);
+    if (flow !== 'mytable-set-username') return;
+
+    const username = message.text.trim();
+    if (!NEXUS_USERNAME_RE.test(username)) {
+      await ctx.reply(
+        'Invalid Nexus username. Use letters, numbers, _, -, . (1-64 characters).',
+      );
+      return;
+    }
+
+    await deps.userSettingsRepository.setNexusUsername(userId, username);
+    await ctx.reply(
+      `Nexus username saved as "${username}". Use /mytable to see your pairing.`,
+      Markup.removeKeyboard(),
+    );
   };
 }

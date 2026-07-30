@@ -10,6 +10,15 @@
 // literal; do not truncate to 0.62.
 export const KM_PER_MILE = 0.621371;
 
+// MILES_PER_KM is the inverse of KM_PER_MILE. Used by the riftfound
+// adapter which takes radius in km (the bot internally works in miles
+// via EventLocation.numMiles).
+export const MILES_PER_KM = 1 / KM_PER_MILE;
+
 export function kmToMiles(km: number): number {
   return km * KM_PER_MILE;
+}
+
+export function milesToKm(miles: number): number {
+  return miles * MILES_PER_KM;
 }

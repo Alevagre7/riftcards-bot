@@ -1,3 +1,4 @@
+import type { InlineKeyboardButton } from '@telegraf/types/markup.js';
 import { Event } from '../../core/entities/event.js';
 import { EventRegistration } from '../../core/entities/event-registration.js';
 import { escapeHtml } from './card-formatter.js';
@@ -17,26 +18,27 @@ const timeFmt = new Intl.DateTimeFormat('en-GB', {
   timeZone: tz,
 });
 
-const costFmt = new Intl.NumberFormat('en-GB', {
-  style: 'currency',
-  currency: 'EUR',
-  currencyDisplay: 'symbol',
-});
-
 // ---------------------------------------------------------------------------
 // formatEventDetail
 // ---------------------------------------------------------------------------
 
-// Renders a single event's full detail as an HTML string. The caller is
-// responsible for attaching the Back button to the inline keyboard.
+// Renders a single event's full detail as an HTML string with inline
+// keyboard buttons for Scoreboard, All tables, and optionally Watch
+// (only in private chats when locatorEventId is present).
 //
 // registrations: pass the upstream registration list, or the literal
 // string 'unavailable' when the endpoint failed.
 
+export interface EventDetailResult {
+  body: string;
+  buttons: InlineKeyboardButton[][];
+}
+
 export function formatEventDetail(
   event: Event,
   registrations: readonly EventRegistration[] | 'unavailable',
-): string {
+  options?: { privateChat?: boolean },
+): EventDetailResult {
   const lines: string[] = [];
 
   // Header
@@ -50,6 +52,11 @@ export function formatEventDetail(
 
   // Store
   lines.push(`\uD83C\uDFEA ${escapeHtml(event.storeName)}`);
+
+  // Event type (riftfound)
+  if (event.eventType) {
+    lines.push(`\uD83C\uDFAF ${escapeHtml(event.eventType)}`);
+  }
 
   // Address
   if (event.storeAddress) {
@@ -72,8 +79,15 @@ export function formatEventDetail(
     lines.push(capStr);
   }
 
-  // Cost
-  if (event.isFree) {
+  // Description (riftfound)
+  if (event.description) {
+    lines.push(`\uD83D\uDCDD ${escapeHtml(event.description)}`);
+  }
+
+  // Cost — prefer riftfound price string, fall back to legacy fields
+  if (event.price) {
+    lines.push(`\uD83D\uDCB0 ${escapeHtml(event.price)}`);
+  } else if (event.isFree) {
     lines.push('\uD83D\uDCB0 Free');
   } else if (event.costAmount != null) {
     const currency = event.costCurrency || 'EUR';
@@ -95,8 +109,30 @@ export function formatEventDetail(
     }
   }
 
-  // Locator URL (always present since id is required on Event)
+  // External URL (riftfound)
+  if (event.externalUrl) {
+    lines.push(`\uD83D\uDD17 <a href="${escapeHtml(event.externalUrl)}">${escapeHtml(event.externalUrl)}</a>`);
+  }
+
+  // Locator URL
   lines.push(`Locator: ${event.locatorUrl}`);
 
-  return lines.join('\n');
+  // Build buttons using locatorEventId (numeric) for callback data
+  const locatorId = event.locatorEventId ?? event.id;
+  const buttons: InlineKeyboardButton[][] = [
+    [{ text: 'Scoreboard', callback_data: `event:${locatorId}:scoreboard` }],
+    [{ text: 'All tables', callback_data: `event:${locatorId}:rounds` }],
+  ];
+
+  // Watch button only in private chats when locatorEventId is available
+  if (options?.privateChat === true && event.locatorEventId != null) {
+    buttons.push([{ text: 'Watch', callback_data: `event:${event.locatorEventId}:watch:start` }]);
+  }
+
+  buttons.push([{ text: '\u2190 Back to list', callback_data: 'event:list' }]);
+
+  return {
+    body: lines.join('\n'),
+    buttons,
+  };
 }

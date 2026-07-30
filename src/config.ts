@@ -31,11 +31,36 @@ const configSchema = z.object({
   // (the Cloudflare Worker proxy is gone). The lat/lon/radius here
   // are the global default used when a user has not configured
   // their own location via /events set. See ADR-0006.
+  riftfoundApiUrl: z.string().url().default('https://www.riftfound.com'),
   eventsApiUrl: z.string().url().default('https://api.cloudflare.riftbound.uvsgames.com'),
   eventsLatitude: z.coerce.number().default(37.39),
   eventsLongitude: z.coerce.number().default(-5.99),
   eventsRadiusKm: z.coerce.number().default(80), // 50 miles
   eventsDaysAhead: z.coerce.number().default(7),
+
+  // Nexus Table (player pairing tracker). URL defaults to the
+  // Netlify-hosted function the Android app uses. Token is optional:
+  // the endpoint may be public for read calls.
+  nexusTableApiUrl: z.string().url().default('https://riftboundtoolkit.netlify.app/.netlify/functions/nexus-table'),
+  nexusTableApiToken: z.string().optional(),
+
+  // Admin Telegram IDs — comma-separated. Users in this list can
+  // use the /admin command. Empty = no admin access.
+  adminTelegramIds: z
+    .string()
+    .default('')
+    .transform((s) =>
+      s
+        .split(',')
+        .map((n) => Number(n))
+        .filter((n) => Number.isFinite(n) && n > 0),
+    ),
+
+  // Nexus watcher (background polling). The service is constructed
+  // but not started when disabled — useful for tests and kill-switch.
+  // The interval tunes how often the watcher polls.
+  nexusWatcherEnabled: z.coerce.boolean().default(true),
+  nexusWatcherIntervalMs: z.coerce.number().default(30000),
 
   // Per-user settings store (see ADR-0006). Path is a file path; in
   // tests the loader can be bypassed and the path set to ':memory:'
@@ -63,11 +88,17 @@ export function loadConfig(): Config {
     webhookUrl: process.env['WEBHOOK_URL'],
     apiTimeoutMs: process.env['API_TIMEOUT_MS'],
     apiRetryAttempts: process.env['API_RETRY_ATTEMPTS'],
+    riftfoundApiUrl: process.env['RIFTFOUND_API_URL'],
     eventsApiUrl: process.env['EVENTS_API_URL'],
     eventsLatitude: process.env['EVENTS_LATITUDE'],
     eventsLongitude: process.env['EVENTS_LONGITUDE'],
     eventsRadiusKm: process.env['EVENTS_RADIUS_KM'],
     eventsDaysAhead: process.env['EVENTS_DAYS_AHEAD'],
+    nexusTableApiUrl: process.env['NEXUS_TABLE_API_URL'],
+    nexusTableApiToken: process.env['NEXUS_TABLE_API_TOKEN'],
+    nexusWatcherEnabled: process.env['NEXUS_WATCHER_ENABLED'],
+    nexusWatcherIntervalMs: process.env['NEXUS_WATCHER_INTERVAL_MS'],
+    adminTelegramIds: process.env['ADMIN_TELEGRAM_IDS'],
     userSettingsDbPath: process.env['USER_SETTINGS_DB_PATH'],
   });
 

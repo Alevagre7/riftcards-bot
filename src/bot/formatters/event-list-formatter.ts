@@ -1,27 +1,42 @@
 import { Event } from '../../core/entities/event.js';
-import { escapeHtml } from './card-formatter.js';
 
 const tz = 'Europe/Madrid';
 
-const dateFmt = new Intl.DateTimeFormat('en-GB', {
+const buttonDateFmt = new Intl.DateTimeFormat('en-GB', {
   weekday: 'short',
-  month: 'short',
   day: 'numeric',
   timeZone: tz,
 });
 
-const timeFmt = new Intl.DateTimeFormat('en-GB', {
-  hour: '2-digit',
-  minute: '2-digit',
-  timeZone: tz,
-});
-
-function fmtDate(d: Date): string {
-  return dateFmt.format(d);
+// Match eventType case-insensitively against the known riftfound type
+// substrings and return a colored circle emoji. The icons are part of
+// the button label only — never stored on the Event entity. Substring
+// match is intentional: defensive against upstream name tweaks
+// ("Summoner Skirmish" vs. "Skirmish"). "pre" matches "Pre-Rift",
+// "Pre Rift", "Prerift", etc.
+function eventTypeIcon(eventType: string): string {
+  const t = eventType.toLowerCase();
+  if (t.includes('skirmish')) return '\uD83D\uDD35';   // \U0001f535
+  if (t.includes('nexus night')) return '\uD83D\uDFE3'; // \U0001f7e3
+  if (t.includes('pre')) return '\uD83D\uDFE2';         // \U0001f7e2
+  return '\u26AA';                                       // ⚪
 }
 
-function fmtTime(d: Date): string {
-  return timeFmt.format(d);
+const MAX_BUTTON_LABEL = 64;
+
+function makeButton(ev: Event): EventListButton {
+  const dayStr = buttonDateFmt.format(ev.startDate);
+  const parts = [
+    `${eventTypeIcon(ev.eventType)} ${dayStr}`,        // 🔵 Tue 21
+    ev.eventType || 'Event',
+    ev.storeName,
+    `${ev.capacity.registered}/${ev.capacity.max}`,
+  ];
+  const full = parts.join(' · ');                          // " · "
+  const label = full.length <= MAX_BUTTON_LABEL
+    ? full
+    : full.slice(0, MAX_BUTTON_LABEL - 1) + '…';          // …
+  return { label, callbackData: `event:${ev.id}` };
 }
 
 // ---------------------------------------------------------------------------
@@ -29,8 +44,8 @@ function fmtTime(d: Date): string {
 // ---------------------------------------------------------------------------
 
 export interface EventListButton {
-  label: string;
-  callbackData: string;
+  readonly label: string;
+  readonly callbackData: string;
 }
 
 export interface FormattedEventList {
@@ -42,19 +57,23 @@ export interface FormattedEventList {
 // formatEventList
 // ---------------------------------------------------------------------------
 
-// Renders a temporal window of events as an HTML body with inline-keyboard
-// button descriptors. The caller wraps the button descriptors in
-// Markup.button.callback() and Markup.inlineKeyboard().
+// Renders a paginated window of events.
 //
-// Sorting: events are sorted by startDate ascending.
-// Buttons:  1–8 events → one row per event (📅 <name> · <date>).
-//          >8 events → first 8 rows + a final "Show all (N)" button row.
-// Body:     all events listed as text regardless of count.
+// Body: a single count line — e.g. "12 events in the next 7 days".
+//       Empty state keeps "No events found in your area in the next N days."
 //
-// The daysAhead parameter is the size of the window, used to label the
-// header and the empty state honestly.
+// Buttons: one row per event on the current page (≤ pageSize rows).
+//          If there are more events than one page, the last row is a
+//          pagination row: ← Prev | Page N of M | Next →
+//
+// The caller is responsible for sorting events by startDate ascending.
 
-export function formatEventList(events: readonly Event[], daysAhead: number): FormattedEventList {
+export function formatEventList(
+  events: readonly Event[],
+  daysAhead: number,
+  currentPage: number = 0,
+  pageSize: number = 8,
+): FormattedEventList {
   const dayLabel = daysAhead === 1 ? '1 day' : `${daysAhead} days`;
 
   if (events.length === 0) {
@@ -64,56 +83,43 @@ export function formatEventList(events: readonly Event[], daysAhead: number): Fo
     };
   }
 
-  // Sort by startDate ascending
-  const sorted = [...events].sort((a, b) => a.startDate.getTime() - b.startDate.getTime());
+  // Body: single count line
+  const eventLabel = events.length === 1 ? 'event' : 'events';
+  const body = `${events.length} ${eventLabel} in the next ${dayLabel}`;
 
-  const parts: string[] = [];
-  parts.push(`<b>Upcoming Events (next ${dayLabel})</b>`);
-  parts.push('');
+  const totalPages = Math.ceil(events.length / pageSize);
+  // Clamp currentPage to valid range
+  const page = Math.max(0, Math.min(currentPage, totalPages - 1));
+  const start = page * pageSize;
+  const end = Math.min(start + pageSize, events.length);
+  const pageEvents = events.slice(start, end);
 
-  for (const event of sorted) {
-    const dateStr = fmtDate(event.startDate);
-    const startTime = fmtTime(event.startDate);
-    const endTime = fmtTime(event.endDate);
-
-    parts.push(`\uD83D\uDCC5 <b>${escapeHtml(event.name)}</b>`);
-    parts.push(`  ${dateStr} \u00B7 ${startTime}\u2013${endTime} \u00B7 ${escapeHtml(event.storeName)}`);
-    parts.push('');
-  }
-
-  // Build buttons
   const buttonRows: EventListButton[][] = [];
 
-  // Button label: "📅 <name> · <date>"
-  const buttonDateFmt = new Intl.DateTimeFormat('en-GB', {
-    weekday: 'short',
-    month: 'short',
-    day: 'numeric',
-    timeZone: tz,
-  });
-
-  const makeButton = (ev: Event): EventListButton => ({
-    label: `\uD83D\uDCC5 ${ev.name} \u00B7 ${buttonDateFmt.format(ev.startDate)}`,
-    callbackData: `event:${ev.id}`,
-  });
-
-  if (sorted.length <= 8) {
-    // One row per event
-    for (const ev of sorted) {
-      buttonRows.push([makeButton(ev)]);
-    }
-  } else {
-    // First 8 events + Show all row
-    for (let i = 0; i < 8; i++) {
-      buttonRows.push([makeButton(sorted[i]!)]);
-    }
-    buttonRows.push([
-      { label: `Show all (${sorted.length})`, callbackData: 'event:list:show-all' },
-    ]);
+  // One row per event on this page
+  for (const ev of pageEvents) {
+    buttonRows.push([makeButton(ev)]);
   }
 
-  return {
-    body: parts.join('\n'),
-    buttons: buttonRows,
-  };
+  // Pagination row (only when total > 1 page)
+  if (totalPages > 1) {
+    const row: EventListButton[] = [];
+
+    if (page > 0) {
+      row.push({ label: '\u2190 Prev', callbackData: `event:page:${page - 1}` });
+    }
+
+    row.push({
+      label: `Page ${page + 1} of ${totalPages}`,
+      callbackData: `event:page:${page}`,
+    });
+
+    if (page < totalPages - 1) {
+      row.push({ label: 'Next \u2192', callbackData: `event:page:${page + 1}` });
+    }
+
+    buttonRows.push(row);
+  }
+
+  return { body, buttons: buttonRows };
 }

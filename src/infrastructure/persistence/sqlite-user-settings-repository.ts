@@ -31,10 +31,20 @@ function rowToLocation(row: UserLocationRow): UserLocation {
   };
 }
 
+interface NexusUsernameRow {
+  telegram_id: number;
+  username: string;
+  updated_at: string;
+}
+
 export class SqliteUserSettingsRepository implements IUserSettingsRepository {
   private readonly getStmt: Database.Statement<[number], UserLocationRow>;
   private readonly setStmt: Database.Statement<[number, number, number, number | null, string]>;
   private readonly clearStmt: Database.Statement<[number]>;
+
+  private readonly getNexusStmt: Database.Statement<[number], NexusUsernameRow>;
+  private readonly setNexusStmt: Database.Statement<[number, string, string]>;
+  private readonly clearNexusStmt: Database.Statement<[number]>;
 
   constructor(private readonly db: Database.Database) {
     this.getStmt = db.prepare<[number], UserLocationRow>(
@@ -50,6 +60,18 @@ export class SqliteUserSettingsRepository implements IUserSettingsRepository {
     );
     this.clearStmt = db.prepare<[number]>(
       'DELETE FROM user_locations WHERE telegram_id = ?',
+    );
+
+    this.getNexusStmt = db.prepare<[number], NexusUsernameRow>(
+      'SELECT telegram_id, username, updated_at FROM user_nexus_usernames WHERE telegram_id = ?',
+    );
+    this.setNexusStmt = db.prepare<[number, string, string]>(
+      `INSERT OR REPLACE INTO user_nexus_usernames
+         (telegram_id, username, updated_at)
+       VALUES (?, ?, ?)`,
+    );
+    this.clearNexusStmt = db.prepare<[number]>(
+      'DELETE FROM user_nexus_usernames WHERE telegram_id = ?',
     );
   }
 
@@ -73,5 +95,18 @@ export class SqliteUserSettingsRepository implements IUserSettingsRepository {
 
   async clearLocation(telegramId: number): Promise<void> {
     this.clearStmt.run(telegramId);
+  }
+
+  async getNexusUsername(telegramId: number): Promise<string | null> {
+    const row = this.getNexusStmt.get(telegramId);
+    return row ? row.username : null;
+  }
+
+  async setNexusUsername(telegramId: number, username: string): Promise<void> {
+    this.setNexusStmt.run(telegramId, username, new Date().toISOString());
+  }
+
+  async clearNexusUsername(telegramId: number): Promise<void> {
+    this.clearNexusStmt.run(telegramId);
   }
 }

@@ -11,7 +11,7 @@
 
 const TTL_MS = 5 * 60 * 1000;
 
-type FlowKind = 'events-set-location';
+type FlowKind = 'events-set-location' | 'mytable-set-username';
 
 interface FlowEntry {
   readonly kind: FlowKind;
