@@ -18,7 +18,7 @@ export function createHelpCommand() {
         '/events — Upcoming events in the next 7 days (your saved location).',
         'Subcommands:',
         '  /events 14 — Next 14 days',
-        '  /events set [<lat>, <lon>] — Save your location: pin, Share button, or inline coords (e.g. /events set 42.5, -83.8),',
+        '  /events — Pick a time window (1d, 3d, 5d, 1 week). Also /events 14 for any other positive N,',
         '  /events clear — Forget your saved location',
         '  /events unwatch — Stop watching the current event',
         'Detail card: tap an event to see Scoreboard, All tables, and (in private chat) Watch.',
@@ -42,7 +42,6 @@ export function createHelpCommand() {
         '',
         'Settings (per-user): location via /events set, Nexus username via /mytable set, event watches via /events Watch.',
       ].join('\n'),
-      { parse_mode: 'HTML' },
     );
   };
 }

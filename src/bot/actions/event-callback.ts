@@ -7,6 +7,7 @@ import { IEventWatchRepository } from '../../core/ports/event-watch-repository.j
 import { renderEventList, renderEventDetail, renderEventsPage } from '../commands/events.js';
 import { formatEventScoreboard } from '../formatters/event-scoreboard-formatter.js';
 import { formatEventRounds } from '../formatters/event-rounds-formatter.js';
+import { eventsPaginationState } from '../state/events-pagination-state.js';
 
 interface EventActionDeps {
   eventRepository: IEventRepository;
@@ -41,9 +42,25 @@ export function createEventActionHandler(deps: EventActionDeps) {
       return;
     }
 
-    // Back to list
+    // Window picker menu (event:range:<days>)
+    const rangeMatch = /^event:range:(\d+)$/.exec(data);
+    if (rangeMatch) {
+      const days = parseInt(rangeMatch[1]!, 10);
+      if (days > 0) {
+        await renderEventList(ctx, deps, days);
+      }
+      return;
+    }
+
+    // Back to list — use the window the user last picked, not the
+    // config default. The state is set by renderEventList itself;
+    // when no prior pick (state missing or 5-min TTL expired), fall
+    // back to deps.daysAhead.
     if (data === 'event:list') {
-      await renderEventList(ctx, deps, deps.daysAhead);
+      const userId = ctx.from?.id;
+      const stored = userId != null ? eventsPaginationState.get(userId) : null;
+      const days = stored?.daysAhead ?? deps.daysAhead;
+      await renderEventList(ctx, deps, days);
       return;
     }
 

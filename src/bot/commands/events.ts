@@ -11,6 +11,26 @@ import { eventsPaginationState } from '../state/events-pagination-state.js';
 import { stripCommand } from '../utils/strip-command.js';
 import { kmToMiles } from '../../utils/units.js';
 
+// Module-level constants for the window-picker menu. The button count
+// is fixed at 4 so the keyboard is a single row; if the array grows
+// past 4, Markup.inlineKeyboard will wrap to additional rows
+// automatically.
+const EVENT_WINDOW_OPTIONS: readonly { label: string; days: number }[] = [
+  { label: '1 day', days: 1 },
+  { label: '3 days', days: 3 },
+  { label: '5 days', days: 5 },
+  { label: '1 week', days: 7 },
+];
+
+// IN_PROGRESS_LOOKBACK_HOURS widens the /events fetch window backwards
+// from `now` so events that have already started but not yet ended are
+// returned by the upstream. The upstream (both riftfound and the
+// legacy API) filters on startDate, not endDate, so a [now, now+days]
+// window silently drops in-progress events — exactly when the Watch
+// flow is most useful. 12h covers typical 4-8h tournaments, including
+// ones that started yesterday morning and are still running.
+const IN_PROGRESS_LOOKBACK_HOURS = 12;
+
 // ---------------------------------------------------------------------------
 // Deps interface
 // ---------------------------------------------------------------------------
@@ -71,10 +91,20 @@ export async function renderEventList(
   const location = await resolveLocation(userId, deps);
 
   const now = deps.now ? deps.now() : new Date();
+  // Widen the window backwards by IN_PROGRESS_LOOKBACK_HOURS so events
+  // that have already started but not yet ended are returned by the
+  // upstream.
+  const startAfter = new Date(now.getTime() - IN_PROGRESS_LOOKBACK_HOURS * 60 * 60 * 1000);
   const end = new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
-  const events = await deps.eventRepository.getEvents(now, end, location);
+  const rawEvents = await deps.eventRepository.getEvents(startAfter, end, location);
 
-  // Sort by startDate ascending
+  // Post-filter: drop events whose endDate is already in the past.
+  // The upstream may return events that started within the lookback
+  // but have since ended (e.g. a 1h event that started 11h ago).
+  const events = rawEvents.filter((ev) => ev.endDate.getTime() >= now.getTime());
+
+  // Sort by startDate ascending — in-progress events (started in the
+  // past) bubble to the top automatically.
   const sorted = [...events].sort((a, b) => a.startDate.getTime() - b.startDate.getTime());
 
   // Store in pagination state for Prev/Next navigation
@@ -83,6 +113,24 @@ export async function renderEventList(
   }
 
   await renderEventListWithPage(ctx, deps, sorted, days, 0);
+}
+
+// ---------------------------------------------------------------------------
+// renderEventWindowMenu — exported so callbacks can re-use
+// ---------------------------------------------------------------------------
+
+// Sends the window-picker menu: 4 inline buttons, one per
+// pre-configured time window. Tapping a button dispatches
+// `event:range:<days>`, which the action handler turns into a
+// `renderEventList(ctx, deps, days)` call.
+
+export async function renderEventWindowMenu(ctx: Context): Promise<void> {
+  const keyboard = Markup.inlineKeyboard(
+    EVENT_WINDOW_OPTIONS.map((opt) => [
+      Markup.button.callback(opt.label, `event:range:${opt.days}`),
+    ]),
+  );
+  await ctx.reply('Pick a time window:', keyboard);
 }
 
 // ---------------------------------------------------------------------------
@@ -194,6 +242,8 @@ function parseAction(rawArgs: string): EventsAction {
   if (arg === 'set' || arg.startsWith('set ')) return 'set';
   if (arg === 'clear') return 'clear';
   if (arg === 'unwatch') return 'unwatch';
+  // Numeric arg (e.g. /events 14) → show with that many days.
+  if (/^\d+$/.test(arg)) return 'show';
   return 'usage';
 }
 // parseCoords: accept "<lat>, <lon>" with optional whitespace and
@@ -308,21 +358,24 @@ export function createEventsCommand(deps: EventsCommandDeps) {
       return;
     }
 
-    // action === 'show' — parse optional days argument
-    let days = deps.daysAhead;
-    if (rawArgs.trim().length > 0) {
-      const parsed = parseInt(rawArgs.trim(), 10);
-      if (isNaN(parsed) || parsed <= 0) {
-        await ctx.reply(
-          'Usage: /events [days]\n\n' +
-            'Example: /events 14  (show events in the next 14 days)',
-        );
-        return;
-      }
-      days = parsed;
+    // action === 'show' — empty args opens the window-picker menu;
+    // a positive integer N is the power-user path that fetches
+    // directly for N days.
+    const trimmed = rawArgs.trim();
+    if (trimmed.length === 0) {
+      await renderEventWindowMenu(ctx);
+      return;
+    }
+    const parsed = parseInt(trimmed, 10);
+    if (isNaN(parsed) || parsed <= 0) {
+      await ctx.reply(
+        'Pick a time window with the /events menu, or type /events <N> for any positive N.\n' +
+          'Example: /events 14  (show events in the next 14 days)',
+      );
+      return;
     }
 
-    await renderEventList(ctx, deps, days);
+    await renderEventList(ctx, deps, parsed);
   };
 }
 
