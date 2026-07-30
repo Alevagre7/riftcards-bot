@@ -191,10 +191,19 @@ type EventsAction = 'show' | 'set' | 'clear' | 'unwatch' | 'usage';
 function parseAction(rawArgs: string): EventsAction {
   const arg = rawArgs.trim().toLowerCase();
   if (arg === '') return 'show';
-  if (arg === 'set') return 'set';
+  if (arg === 'set' || arg.startsWith('set ')) return 'set';
   if (arg === 'clear') return 'clear';
   if (arg === 'unwatch') return 'unwatch';
   return 'usage';
+}
+// parseCoords: accept "<lat>, <lon>" with optional whitespace and
+// negatives. Local helper, not exported — only the inline-coords
+// branch of `createEventsCommand` calls it. Returns null on any
+// deviation (semicolons, single number, non-numeric, etc.).
+function parseCoords(input: string): { latitude: number; longitude: number } | null {
+  const match = input.match(/^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/);
+  if (!match) return null;
+  return { latitude: parseFloat(match[1]!), longitude: parseFloat(match[2]!) };
 }
 
 // ---------------------------------------------------------------------------
@@ -223,16 +232,54 @@ export function createEventsCommand(deps: EventsCommandDeps) {
     }
 
     if (action === 'set') {
-      const keyboard = Markup.keyboard([
-        [Markup.button.locationRequest('Share location')],
-      ])
-        .oneTime()
-        .resize();
-      await ctx.reply('Send a location pin or tap the button below.', keyboard);
-      const userId = ctx.from?.id;
-      if (userId != null) {
-        setupFlow.start(userId, 'events-set-location');
+      const rest = rawArgs.trim().slice(3).trim(); // strip the leading "set"
+      if (rest === '') {
+        // Existing pin flow.
+        const keyboard = Markup.keyboard([
+          [Markup.button.locationRequest('Share location')],
+        ])
+          .oneTime()
+          .resize();
+        await ctx.reply('Send a location pin or tap the button below.', keyboard);
+        const userId = ctx.from?.id;
+        if (userId != null) {
+          setupFlow.start(userId, 'events-set-location');
+        }
+        return;
       }
+
+      // Inline coordinates.
+      const coords = parseCoords(rest);
+      if (!coords) {
+        await ctx.reply(
+          'Invalid coordinates. Use "lat, lon" — for example:\n' +
+            '/events set 42.58836934328923, -83.87718629792093',
+        );
+        return;
+      }
+      const { latitude, longitude } = coords;
+      if (latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
+        await ctx.reply(
+          'Coordinates out of range. Latitude must be in [-90, 90], longitude in [-180, 180].',
+        );
+        return;
+      }
+      const userId = ctx.from?.id;
+      if (userId == null) {
+        await ctx.reply('Could not identify your account. Please try again.');
+        return;
+      }
+      // Cancel any in-flight pin flow so a stray pin the user sends later
+      // doesn't overwrite the freshly-saved inline coords.
+      setupFlow.cancel(userId);
+      await deps.userSettingsRepository.setLocation(userId, {
+        latitude,
+        longitude,
+        radiusKm: 80, // matches the pin flow (src/bot/handlers/location-pickup.ts:49)
+      });
+      await ctx.reply(
+        `Location saved (${latitude}, ${longitude}). Use /events to find upcoming events near you.`,
+      );
       return;
     }
 

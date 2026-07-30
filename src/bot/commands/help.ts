@@ -18,7 +18,7 @@ export function createHelpCommand() {
         '/events — Upcoming events in the next 7 days (your saved location).',
         'Subcommands:',
         '  /events 14 — Next 14 days',
-        '  /events set — Save your location (use Share button or send a pin)',
+        '  /events set [<lat>, <lon>] — Save your location: pin, Share button, or inline coords (e.g. /events set 42.5, -83.8),',
         '  /events clear — Forget your saved location',
         '  /events unwatch — Stop watching the current event',
         'Detail card: tap an event to see Scoreboard, All tables, and (in private chat) Watch.',
