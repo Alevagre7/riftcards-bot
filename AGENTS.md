@@ -445,9 +445,9 @@ Post-task steps the agent runs:
 3. Commit: `git -C riftbot add -A && git -C riftbot commit -m "<message>"`. Multiple commits per plan are fine; group by phase.
 4. Push: `git -C riftbot push -u origin feat/<plan-slug>`.
 5. Deploy the branch for the user to verify: `scripts/deploy.sh feat/<plan-slug>`. Echoes the deployed SHA; relay that to the user so they know what to test.
-6. Stop and wait for the user to verify on the Mini PC. Do not merge.
+6. Stop. Ask the user via `ask`: "Did you test the deployed branch? Does it work?" Do not merge until they confirm. If they request changes, stay on the branch — repeat steps 3–5 for the iteration, then re-ask.
 
-On user approval, the agent runs:
+On user confirmation, the agent closes the loop immediately — do not wait for a separate request:
 
 7. `git -C riftbot checkout main && git -C riftbot pull --ff-only`.
 8. `git -C riftbot merge --no-ff feat/<plan-slug> -m "Merge feat/<plan-slug>"`.
