@@ -160,11 +160,43 @@ describe('formatEventDetail', () => {
 
   // --- Button tests ---
 
-  it('returns buttons with Scoreboard, All tables, and Back', () => {
+  it('returns buttons with Leaderboard, All tables, and Back when isStarted is true', () => {
+    const result = formatEventDetail(baseEvent, [], { isStarted: true });
+    const texts = result.buttons.flat().map((b) => b.text);
+    expect(texts).toContain('Leaderboard');
+    expect(texts).toContain('All tables');
+    expect(texts).toContain('\u2190 Back to list');
+  });
+
+  it('returns buttons with Leaderboard, All tables, and Back when isStarted is undefined (fallback)', () => {
     const result = formatEventDetail(baseEvent, []);
     const texts = result.buttons.flat().map((b) => b.text);
-    expect(texts).toContain('Scoreboard');
+    expect(texts).toContain('Leaderboard');
     expect(texts).toContain('All tables');
+    expect(texts).toContain('\u2190 Back to list');
+  });
+
+  it('omits Leaderboard and All tables when isStarted is false', () => {
+    const result = formatEventDetail(baseEvent, [], { isStarted: false });
+    const texts = result.buttons.flat().map((b) => b.text);
+    expect(texts).not.toContain('Leaderboard');
+    expect(texts).not.toContain('All tables');
+    expect(texts).toContain('\u2190 Back to list');
+  });
+
+  it('shows Watch button alongside Leaderboard when isStarted is true and privateChat', () => {
+    const result = formatEventDetail(baseEvent, [], { privateChat: true, isStarted: true });
+    const texts = result.buttons.flat().map((b) => b.text);
+    expect(texts).toContain('Leaderboard');
+    expect(texts).toContain('Watch');
+  });
+
+  it('shows Watch button without Leaderboard when isStarted is false and privateChat', () => {
+    const result = formatEventDetail(baseEvent, [], { privateChat: true, isStarted: false });
+    const texts = result.buttons.flat().map((b) => b.text);
+    expect(texts).not.toContain('Leaderboard');
+    expect(texts).not.toContain('All tables');
+    expect(texts).toContain('Watch');
     expect(texts).toContain('\u2190 Back to list');
   });
 
@@ -185,6 +217,14 @@ describe('formatEventDetail', () => {
     const result = formatEventDetail(ev, [], { privateChat: true });
     const texts = result.buttons.flat().map((b) => b.text);
     expect(texts).not.toContain('Watch');
+  });
+
+  it('uses leaderboard callback_data for Leaderboard button', () => {
+    const result = formatEventDetail(baseEvent, [], { isStarted: true });
+    const btn = result.buttons.flat().find(
+      (b): b is InlineKeyboardButton.CallbackButton => b.text === 'Leaderboard' && 'callback_data' in b,
+    );
+    expect(btn?.callback_data).toBe('event:42:leaderboard');
   });
 
   it('uses correct callback_data for Watch button', () => {

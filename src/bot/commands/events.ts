@@ -147,7 +147,7 @@ export async function renderEventDetail(
   const userId = ctx.from?.id;
   const location = await resolveLocation(userId, deps);
 
-  // Fetch event + registrations in parallel; registrations can fail
+  // Fetch event + registrations + locator data in parallel
   const [event, registrations] = await Promise.all([
     deps.eventRepository.getEventById(id, location),
     deps.eventRepository.getEventRegistrations(id, location).catch((err) => {
@@ -161,8 +161,22 @@ export async function renderEventDetail(
     return;
   }
 
+  // Fetch locator data to determine if the event has started
+  // (locator failure must not break the detail page)
+  let isStarted: boolean | undefined;
+  const locatorEventId = event.locatorEventId ?? parseInt(id, 10);
+  if (deps.locatorRepository) {
+    try {
+      const locatorData = await deps.locatorRepository.getEventData(locatorEventId);
+      isStarted = locatorData?.currentRound != null ? true : false;
+    } catch {
+      // Locator failure → isStarted stays undefined (show everything)
+    }
+  }
+
   const result = formatEventDetail(event, registrations, {
     privateChat: ctx.chat?.type === 'private',
+    ...(isStarted !== undefined ? { isStarted } : {}),
   });
 
   // Always edit in place (called from a callback)

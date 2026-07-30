@@ -6,6 +6,13 @@
 // is a different data source (HTML page vs JSON API) and has a
 // different lifecycle (many reads per watch tick).
 
+export interface LocatorStanding {
+  readonly rank: number;
+  readonly name: string;
+  readonly wins: number | null;
+  readonly losses: number | null;
+}
+
 export interface LocatorRosterEntry {
   readonly displayName: string;
   readonly status: string;
@@ -25,6 +32,7 @@ export interface LocatorEventData {
   readonly name: string;
   readonly currentRound: number | null;
   readonly roster: readonly LocatorRosterEntry[];
+  readonly standings: readonly LocatorStanding[];
   readonly pairings: readonly LocatorPairing[];
   readonly fetchedAt: string;
 }

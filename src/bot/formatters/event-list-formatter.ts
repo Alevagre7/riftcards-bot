@@ -111,7 +111,7 @@ export function formatEventList(
 
     row.push({
       label: `Page ${page + 1} of ${totalPages}`,
-      callbackData: `event:page:${page}`,
+      callbackData: 'event:noop',
     });
 
     if (page < totalPages - 1) {

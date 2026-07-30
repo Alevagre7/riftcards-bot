@@ -16,6 +16,7 @@ import {
   LocatorEventData,
   LocatorPairing,
   LocatorRosterEntry,
+  LocatorStanding,
 } from '../../core/ports/locator-repository.js';
 import { ApiResponseError } from '../../core/errors/index.js';
 import { fetchWithRetry } from '../../utils/api-client.js';
@@ -79,6 +80,37 @@ function parseScoresFromFlightData(
   }
 
   return scores;
+}
+
+/** Parse standings from RSC flight data when present. */
+function parseStandingsFromFlightData(
+  html: string,
+): LocatorStanding[] {
+  const standings: LocatorStanding[] = [];
+  const seen = new Set<string>();
+
+  // RSC flight embeds data like:
+  //   ...,rank:1,name:"Alice",wins:3,losses:1,...
+  const standingPattern =
+    /rank:(\d+),name:"([^"]*)",wins:(null|\d+),losses:(null|\d+)/g;
+
+  let match: RegExpExecArray | null;
+  while ((match = standingPattern.exec(html)) !== null) {
+    const name = match[2]!;
+
+    // Dedup: standings rows may appear mirrored, same as pairings
+    if (seen.has(name)) continue;
+    seen.add(name);
+
+    standings.push({
+      rank: parseInt(match[1]!, 10),
+      name,
+      wins: match[3] === 'null' ? null : parseInt(match[3]!, 10),
+      losses: match[4] === 'null' ? null : parseInt(match[4]!, 10),
+    });
+  }
+
+  return standings;
 }
 
 // ---------------------------------------------------------------------------
@@ -152,12 +184,14 @@ export class LocatorHtmlAdapter implements ILocatorRepository {
 
     const roster = this.parseRoster($);
     const pairings = this.parsePairings($, html);
+    const standings = parseStandingsFromFlightData(html);
 
     return {
       eventId,
       name,
       currentRound,
       roster,
+      standings,
       pairings,
       fetchedAt: new Date().toISOString(),
     };

@@ -5,7 +5,7 @@ import { IUserSettingsRepository } from '../../core/ports/user-settings-reposito
 import { ILocatorRepository } from '../../core/ports/locator-repository.js';
 import { IEventWatchRepository } from '../../core/ports/event-watch-repository.js';
 import { renderEventList, renderEventDetail, renderEventsPage } from '../commands/events.js';
-import { formatEventScoreboard } from '../formatters/event-scoreboard-formatter.js';
+import { formatEventLeaderboard } from '../formatters/event-leaderboard-formatter.js';
 import { formatEventRounds } from '../formatters/event-rounds-formatter.js';
 import { eventsPaginationState } from '../state/events-pagination-state.js';
 
@@ -26,6 +26,9 @@ export function createEventActionHandler(deps: EventActionDeps) {
     if (!data || !data.startsWith('event:') && !data.startsWith('admin:')) return;
 
     await ctx.answerCbQuery();
+
+    // No-op: page label click — silent ack
+    if (data === 'event:noop') return;
 
     // Admin: stop watch
     const adminStopMatch = /^admin:stop:(\d+)$/.exec(data);
@@ -64,10 +67,10 @@ export function createEventActionHandler(deps: EventActionDeps) {
       return;
     }
 
-    // Scoreboard view
-    const scoreboardMatch = /^event:(\d+):scoreboard$/.exec(data);
-    if (scoreboardMatch) {
-      await handleScoreboard(ctx, deps, scoreboardMatch[1]!);
+    // Leaderboard view
+    const leaderboardMatch = /^event:(\d+):leaderboard$/.exec(data);
+    if (leaderboardMatch) {
+      await handleLeaderboard(ctx, deps, leaderboardMatch[1]!);
       return;
     }
 
@@ -111,10 +114,10 @@ export function createEventActionHandler(deps: EventActionDeps) {
 }
 
 // ---------------------------------------------------------------------------
-// Scoreboard
+// Leaderboard
 // ---------------------------------------------------------------------------
 
-async function handleScoreboard(ctx: Context, deps: EventActionDeps, eventIdStr: string): Promise<void> {
+async function handleLeaderboard(ctx: Context, deps: EventActionDeps, eventIdStr: string): Promise<void> {
   const eventId = parseInt(eventIdStr, 10);
   if (isNaN(eventId)) {
     await ctx.answerCbQuery('Invalid event.');
@@ -125,7 +128,7 @@ async function handleScoreboard(ctx: Context, deps: EventActionDeps, eventIdStr:
     await ctx.answerCbQuery('Locator data not available.');
     return;
   }
-  const body = formatEventScoreboard(data);
+  const body = formatEventLeaderboard(data);
   await ctx.editMessageText(body);
 }
 

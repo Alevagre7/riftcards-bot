@@ -72,6 +72,7 @@ describe('LocatorHtmlAdapter', () => {
       expect(data!.name).toBe('Wednesday Evening Nexus Night');
       expect(data!.currentRound).toBe(2);
       expect(data!.pairings.length).toBe(5);
+      expect(Array.isArray(data!.standings)).toBe(true);
 
       // Verify individual pairings
       const table1 = data!.pairings.find((p) => p.tableNumber === 1)!;
@@ -118,6 +119,35 @@ describe('LocatorHtmlAdapter', () => {
         (p) => `${p.tableNumber}:${[p.player1, p.player2].sort().join('|')}`,
       );
       expect(new Set(keys).size).toBe(5);
+    });
+
+    it('parses standings from RSC flight data', async () => {
+      const syntheticHtml =
+        '<html><body>'
+        + '<h1>Test Event</h1>'
+        + '<h1>Round 3</h1>'
+        + '...rank:1,name:"Alice",wins:3,losses:1...'
+        + '...rank:2,name:"Bob",wins:2,losses:2...'
+        + '...rank:3,name:"Charlie",wins:1,losses:3...'
+        + '</body></html>';
+      stubFetch(fetchSpy, 200, syntheticHtml);
+
+      const adapter = makeAdapter();
+      const data = await adapter.getEventData(735205);
+
+      expect(data).not.toBeNull();
+      expect(data!.standings).toHaveLength(3);
+
+      const alice = data!.standings.find((s) => s.name === 'Alice')!;
+      expect(alice).toBeDefined();
+      expect(alice.rank).toBe(1);
+      expect(alice.wins).toBe(3);
+      expect(alice.losses).toBe(1);
+
+      const bob = data!.standings.find((s) => s.name === 'Bob')!;
+      expect(bob.rank).toBe(2);
+      expect(bob.wins).toBe(2);
+      expect(bob.losses).toBe(2);
     });
 
     it('returns null on 404', async () => {

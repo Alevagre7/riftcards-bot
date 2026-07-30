@@ -40,6 +40,7 @@ function makeEventData(overrides?: Partial<LocatorEventData>): LocatorEventData 
     name: 'Test Event',
     currentRound: 2,
     roster: [],
+    standings: [],
     pairings: [],
     fetchedAt: new Date().toISOString(),
     ...overrides,

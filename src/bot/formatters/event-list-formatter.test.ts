@@ -100,7 +100,7 @@ describe('formatEventList', () => {
     const paginationRow = out.buttons[8]!;
     expect(paginationRow).toHaveLength(2);
     expect(paginationRow[0]!.label).toBe('Page 1 of 2');
-    expect(paginationRow[0]!.callbackData).toBe('event:page:0');
+    expect(paginationRow[0]!.callbackData).toBe('event:noop');
     expect(paginationRow[1]!.label).toBe('Next \u2192');
     expect(paginationRow[1]!.callbackData).toBe('event:page:1');
   });
@@ -199,7 +199,7 @@ describe('formatEventList', () => {
     expect(paginationRow[0]!.label).toBe('\u2190 Prev');
     expect(paginationRow[0]!.callbackData).toBe('event:page:0');
     expect(paginationRow[1]!.label).toBe('Page 2 of 2');
-    expect(paginationRow[1]!.callbackData).toBe('event:page:1');
+    expect(paginationRow[1]!.callbackData).toBe('event:noop');
   });
 
   it('includes prev and next on middle pages', () => {
@@ -215,7 +215,7 @@ describe('formatEventList', () => {
     expect(paginationRow[0]!.label).toBe('\u2190 Prev');
     expect(paginationRow[0]!.callbackData).toBe('event:page:0');
     expect(paginationRow[1]!.label).toBe('Page 2 of 3');
-    expect(paginationRow[1]!.callbackData).toBe('event:page:1');
+    expect(paginationRow[1]!.callbackData).toBe('event:noop');
     expect(paginationRow[2]!.label).toBe('Next \u2192');
     expect(paginationRow[2]!.callbackData).toBe('event:page:2');
   });

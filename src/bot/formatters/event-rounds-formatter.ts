@@ -41,10 +41,5 @@ export function formatEventRounds(data: LocatorEventData): string {
     );
   }
 
-  lines.push('');
-  lines.push(
-    '(Round-by-round view requires more data than the locator currently exposes; showing current round only.)',
-  );
-
   return lines.join('\n');
 }

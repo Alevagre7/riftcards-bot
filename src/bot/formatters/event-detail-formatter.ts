@@ -37,7 +37,7 @@ export interface EventDetailResult {
 export function formatEventDetail(
   event: Event,
   registrations: readonly EventRegistration[] | 'unavailable',
-  options?: { privateChat?: boolean },
+  options?: { privateChat?: boolean; isStarted?: boolean },
 ): EventDetailResult {
   const lines: string[] = [];
 
@@ -119,10 +119,16 @@ export function formatEventDetail(
 
   // Build buttons using locatorEventId (numeric) for callback data
   const locatorId = event.locatorEventId ?? event.id;
-  const buttons: InlineKeyboardButton[][] = [
-    [{ text: 'Scoreboard', callback_data: `event:${locatorId}:scoreboard` }],
-    [{ text: 'All tables', callback_data: `event:${locatorId}:rounds` }],
-  ];
+  const buttons: InlineKeyboardButton[][] = [];
+
+  // Show Leaderboard + All tables only when the event has started
+  // (isStarted=true or undefined — fallback when locator is unreachable)
+  if (options?.isStarted !== false) {
+    buttons.push(
+      [{ text: 'Leaderboard', callback_data: `event:${locatorId}:leaderboard` }],
+      [{ text: 'All tables', callback_data: `event:${locatorId}:rounds` }],
+    );
+  }
 
   // Watch button only in private chats when locatorEventId is available
   if (options?.privateChat === true && event.locatorEventId != null) {
