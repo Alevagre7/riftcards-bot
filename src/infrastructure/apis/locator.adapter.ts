@@ -1,11 +1,11 @@
 // LocatorHtmlAdapter — parses the Riftbound Locator SSR HTML page
-// to extract roster, pairings, and current round data.
+// to extract roster, pairings, standings, and current round data.
 //
-// The locator is a Next.js app; the page data is rendered into the
-// DOM by React Server Components. This adapter extracts it with
-// cheerio, using text-based regex for pairings (more robust than
-// navigating the complex nested div/span structure) plus a regex
-// fallback for scores from the RSC flight data.
+// The locator is a Next.js app; data is hydrated into the page via
+// React Server Component (RSC) flight chunks embedded in
+// `self.__next_f.push` script tags. The adapter extracts these
+// chunks, decodes the JSON, and navigates the React Query state
+// structure to find the actual data.
 //
 // Known limitation: roster pagination is JS-driven (Next/Previous
 // buttons with no href), so we only get the first page's entries.
@@ -48,69 +48,204 @@ const CACHE_TTL_MS = 30_000;
 const MAX_CACHE_SIZE = 50;
 
 // ---------------------------------------------------------------------------
-// Helpers
+// RSC Flight Data Helpers
 // ---------------------------------------------------------------------------
 
-/** Parse scores from RSC flight data when present. */
-function parseScoresFromFlightData(
-  html: string,
-): Record<string, { score1: number | null; score2: number | null }> {
-  const scores: Record<
-    string,
-    { score1: number | null; score2: number | null }
-  > = {};
+/**
+ * Extract the `results` array from a React Query dehydrated state embedded
+ * in an RSC flight chunk. Navigates:
+ *   `state.queries[0].state.data.results`
+ *
+ * Returns `null` if the structure isn't found or isn't parseable.
+ */
+function extractQueryResults(unescaped: string): unknown[] | null {
+  const stateIdx = unescaped.indexOf('"state"');
+  if (stateIdx === -1) return null;
 
-  // RSC flight embeds data like:
-  //   ...,tableNumber:1,player1:"Name1",player2:"Name2",score1:1,score2:0,...
-  const pairingPattern =
-    /tableNumber:(\d+),player1:"([^"]*)",player2:"([^"]*)",score1:(null|\d+),score2:(null|\d+)/g;
+  const braceIdx = unescaped.indexOf('{', stateIdx + 7);
+  if (braceIdx === -1) return null;
 
-  let match: RegExpExecArray | null;
-  while ((match = pairingPattern.exec(html)) !== null) {
-    const tableNum = parseInt(match[1]!, 10);
-    const player1 = match[2]!;
-    const player2 = match[3]!;
-    const score1 = match[4] === 'null' ? null : parseInt(match[4]!, 10);
-    const score2 = match[5] === 'null' ? null : parseInt(match[5]!, 10);
-
-    const key = `${tableNum}:${[player1, player2].sort().join('|')}`;
-    if (!scores[key]) {
-      scores[key] = { score1, score2 };
+  let depth = 0;
+  let endIdx = braceIdx;
+  for (let i = braceIdx; i < unescaped.length; i++) {
+    if (unescaped[i] === '{') {
+      depth++;
+    } else if (unescaped[i] === '}') {
+      depth--;
+      if (depth === 0) {
+        endIdx = i + 1;
+        break;
+      }
     }
   }
 
-  return scores;
+  try {
+    // JSON.parse returns any; validated by the Array.isArray guard at the end
+    const stateObj = JSON.parse(unescaped.substring(braceIdx, endIdx));
+    const queries: unknown = stateObj.queries;
+    const query = Array.isArray(queries) && queries.length > 0 ? queries[0] : null;
+    const queryState: unknown = query && typeof query === 'object'
+      ? (query as Record<string, unknown>).state
+      : null;
+    const data: unknown = queryState && typeof queryState === 'object'
+      ? (queryState as Record<string, unknown>).data
+      : null;
+    const rawResults: unknown = data && typeof data === 'object'
+      ? (data as Record<string, unknown>).results
+      : null;
+    return Array.isArray(rawResults) ? (rawResults as unknown[]) : null;
+  } catch {
+    return null;
+  }
 }
 
-/** Parse standings from RSC flight data when present. */
-function parseStandingsFromFlightData(
-  html: string,
-): LocatorStanding[] {
+/**
+ * Extract RSC data sections (pairings, standings, roster) from the page HTML.
+ * Each section is identified by its `data-testid` attribute within the RSC
+ * flight payload.
+ */
+function parseRscSections(html: string): {
+  pairings: unknown[] | null;
+  standings: unknown[] | null;
+  roster: unknown[] | null;
+} {
+  const result: {
+    pairings: unknown[] | null;
+    standings: unknown[] | null;
+    roster: unknown[] | null;
+  } = { pairings: null, standings: null, roster: null };
+
+  const re = /self\.__next_f\.push\(\[1,"([\s\S]*?)"\]\)/g;
+  let m: RegExpExecArray | null;
+
+  while ((m = re.exec(html)) !== null) {
+    try {
+      const unescaped = JSON.parse(`"${m[1]!}"`) as string;
+
+      for (const key of ['pairings', 'standings', 'roster'] as const) {
+        if (result[key] !== null) continue;
+
+        const testId = `${key}-section`;
+        if (!unescaped.includes(`data-testid":"${testId}"`)) continue;
+
+        const data = extractQueryResults(unescaped);
+        if (data !== null) {
+          result[key] = data;
+        }
+      }
+
+      // Stop early once we have all three sections
+      if (result.pairings !== null && result.standings !== null && result.roster !== null) {
+        break;
+      }
+    } catch {
+      // Skip malformed chunks
+    }
+  }
+
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// RSC → Entity Builders
+// ---------------------------------------------------------------------------
+
+function buildPairingsFromRsc(results: unknown[]): LocatorPairing[] {
+  const pairs: LocatorPairing[] = [];
+
+  for (const raw of results) {
+    const match = raw as Record<string, unknown>;
+
+    // Skip bye matches (table_number 0 or match_is_bye flag)
+    if (match.match_is_bye === true || match.table_number === 0) continue;
+
+    const relationships = match.player_match_relationships as Array<Record<string, unknown>>;
+    if (!relationships || relationships.length < 2) continue;
+
+    // Sort by player_order to get deterministic player1/player2
+    const sorted = [...relationships].sort(
+      (a, b) => (a.player_order as number) - (b.player_order as number),
+    );
+
+    const player1 = sorted[0]!.player as Record<string, unknown>;
+    const player2 = sorted[1]!.player as Record<string, unknown>;
+    const tableNumber = match.table_number as number;
+    const status = match.status as string;
+    const winningPlayerId = match.winning_player as number | null | undefined;
+
+    let score1: number | null = null;
+    let score2: number | null = null;
+
+    // Assign scores only when the match is complete and we know who won
+    if (status === 'COMPLETE' && winningPlayerId != null) {
+      const winnerScore = match.games_won_by_winner as number | null | undefined;
+      const loserScore = match.games_won_by_loser as number | null | undefined;
+
+      if (winningPlayerId === (sorted[0]!.player as Record<string, unknown>).id) {
+        score1 = winnerScore ?? null;
+        score2 = loserScore ?? null;
+      } else {
+        score1 = loserScore ?? null;
+        score2 = winnerScore ?? null;
+      }
+    }
+
+    pairs.push({
+      tableNumber,
+      player1: player1.best_identifier as string,
+      player2: player2.best_identifier as string,
+      score1,
+      score2,
+    });
+  }
+
+  // Sort by table number ascending
+  pairs.sort((a, b) => a.tableNumber - b.tableNumber);
+
+  return pairs;
+}
+
+function buildStandingsFromRsc(results: unknown[]): LocatorStanding[] {
   const standings: LocatorStanding[] = [];
   const seen = new Set<string>();
 
-  // RSC flight embeds data like:
-  //   ...,rank:1,name:"Alice",wins:3,losses:1,...
-  const standingPattern =
-    /rank:(\d+),name:"([^"]*)",wins:(null|\d+),losses:(null|\d+)/g;
+  for (let i = 0; i < results.length; i++) {
+    const entry = results[i] as Record<string, unknown>;
+    const player = entry.player as Record<string, unknown> | undefined;
+    const userEventStatus = entry.user_event_status as Record<string, unknown> | undefined;
 
-  let match: RegExpExecArray | null;
-  while ((match = standingPattern.exec(html)) !== null) {
-    const name = match[2]!;
-
-    // Dedup: standings rows may appear mirrored, same as pairings
-    if (seen.has(name)) continue;
+    const name = (player?.best_identifier as string | undefined) ?? null;
+    if (!name || seen.has(name)) continue;
     seen.add(name);
 
     standings.push({
-      rank: parseInt(match[1]!, 10),
+      rank: i + 1, // 1-based position in the returned array
       name,
-      wins: match[3] === 'null' ? null : parseInt(match[3]!, 10),
-      losses: match[4] === 'null' ? null : parseInt(match[4]!, 10),
+      wins: (userEventStatus?.matches_won as number | null | undefined) ?? null,
+      losses: (userEventStatus?.matches_lost as number | null | undefined) ?? null,
     });
   }
 
   return standings;
+}
+
+function buildRosterFromRsc(results: unknown[]): LocatorRosterEntry[] {
+  const entries: LocatorRosterEntry[] = [];
+
+  for (const raw of results) {
+    const entry = raw as Record<string, unknown>;
+    const displayName = entry.best_identifier as string | undefined;
+    if (!displayName) continue;
+
+    const registrationStatus = entry.registration_status as string;
+    const status = registrationStatus === 'COMPLETE' ? 'Active' : 'Dropped';
+
+    const profileImageUrl = (entry.full_profile_picture_url as string | undefined) ?? null;
+
+    entries.push({ displayName, status, profileImageUrl });
+  }
+
+  return entries;
 }
 
 // ---------------------------------------------------------------------------
@@ -182,9 +317,20 @@ export class LocatorHtmlAdapter implements ILocatorRepository {
       }
     });
 
-    const roster = this.parseRoster($);
-    const pairings = this.parsePairings($, html);
-    const standings = parseStandingsFromFlightData(html);
+    // Extract all data sections from RSC flight chunks in one pass
+    const sections = parseRscSections(html);
+
+    const roster = sections.roster
+      ? buildRosterFromRsc(sections.roster)
+      : this.parseRoster($);
+
+    const pairings = sections.pairings
+      ? buildPairingsFromRsc(sections.pairings)
+      : [];
+
+    const standings = sections.standings
+      ? buildStandingsFromRsc(sections.standings)
+      : [];
 
     return {
       eventId,
@@ -197,6 +343,10 @@ export class LocatorHtmlAdapter implements ILocatorRepository {
     };
   }
 
+  /**
+   * Fallback roster parser using cheerio DOM traversal.
+   * Used when RSC flight data is not available for the roster section.
+   */
   private parseRoster($: cheerio.CheerioAPI): readonly LocatorRosterEntry[] {
     const entries: LocatorRosterEntry[] = [];
 
@@ -230,55 +380,6 @@ export class LocatorHtmlAdapter implements ILocatorRepository {
     });
 
     return entries;
-  }
-
-  private parsePairings(
-    $: cheerio.CheerioAPI,
-    html: string,
-  ): readonly LocatorPairing[] {
-    const scoreMap = parseScoresFromFlightData(html);
-    const pairs: LocatorPairing[] = [];
-    const seen = new Set<string>();
-
-    // Find the Pairings heading, then use text-based extraction on its
-    // parent container's text content. This avoids navigating the
-    // complex nested DOM (each pairing renders twice — mirror layout).
-    const pairingsHeading = $('h2')
-      .filter((_, el) => /pairings/i.test($(el).text()))
-      .first();
-    if (!pairingsHeading.length) return pairs;
-
-    const sectionText = pairingsHeading.parent().text();
-
-    // Each pairing appears as: TABLEN Player1 VS Player2 (mirrored twice)
-    const tableRegex = /TABLE\s*(\d+)\s*(.*?)\s*VS\s*(.*?)(?=TABLE|$)/gi;
-
-    let match: RegExpExecArray | null;
-    while ((match = tableRegex.exec(sectionText)) !== null) {
-      const tableNumber = parseInt(match[1]!, 10);
-      const player1 = match[2]!.trim();
-      const player2 = match[3]!.trim();
-
-      if (!player1 || !player2 || player1.length > 50 || player2.length > 50) {
-        continue;
-      }
-
-      const dedupKey = `${tableNumber}:${[player1, player2].sort().join('|')}`;
-      if (seen.has(dedupKey)) continue;
-      seen.add(dedupKey);
-
-      const cachedScores = scoreMap[dedupKey];
-
-      pairs.push({
-        tableNumber,
-        player1,
-        player2,
-        score1: cachedScores?.score1 ?? null,
-        score2: cachedScores?.score2 ?? null,
-      });
-    }
-
-    return pairs;
   }
 
   // -----------------------------------------------------------------------
