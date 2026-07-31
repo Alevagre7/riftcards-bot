@@ -500,11 +500,17 @@ export class RiftboundV2Adapter implements IEventRepository {
   async getEventDetail(
     id: number,
     location: EventLocation,
+    options?: { fresh?: boolean },
   ): Promise<EventDetail | null> {
-    // Check cache
-    const cached = this.cache.get(id);
-    if (cached && cached.expiresAt > Date.now()) {
-      return cached.data;
+    // Watcher tick path: bypass the in-adapter cache so a round
+    // transition the upstream just published is observed immediately
+    // instead of after up to CACHE_TTL_MS. Also skip the write to
+    // avoid holding a stale snapshot for the next caller.
+    if (options?.fresh !== true) {
+      const cached = this.cache.get(id);
+      if (cached && cached.expiresAt > Date.now()) {
+        return cached.data;
+      }
     }
 
     const event = await this.getEventById(id, location);

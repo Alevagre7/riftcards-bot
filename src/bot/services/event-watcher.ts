@@ -139,7 +139,14 @@ export function createEventWatcher(deps: EventWatcherDeps): EventWatcher {
 
         let data: EventDetail | null;
         try {
-          data = await deps.eventRepository.getEventDetail(eventId, deps.defaultLocation);
+          // Bypass the adapter cache: a round transition the upstream
+          // just published must reach the watcher on this tick rather
+          // than after up to CACHE_TTL_MS.
+          data = await deps.eventRepository.getEventDetail(
+            eventId,
+            deps.defaultLocation,
+            { fresh: true },
+          );
         } catch (error: unknown) {
           if (error instanceof ApiTimeoutError ||
               (error instanceof ApiResponseError && /5\d{2}/.test(error.message))) {
@@ -220,7 +227,7 @@ export function createEventWatcher(deps: EventWatcherDeps): EventWatcher {
       return;
     }
 
-    const diff = detectPairingChange(watch, pairing, currentRoundNumber);
+    const diff = detectPairingChange(watch, pairing, currentRoundNumber, watch.eventUsername);
 
     if (diff.changed) {
       const body = buildNotifyBody(diff.reasons, pairing, currentRoundNumber, watch.eventUsername);

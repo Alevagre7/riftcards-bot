@@ -28,6 +28,7 @@ export function detectPairingChange(
   >,
   next: EventPairing,
   currentRound: number | null,
+  username: string,
 ): PairingDiff {
   const reasons: ChangeReason[] = [];
 
@@ -71,14 +72,15 @@ export function detectPairingChange(
     reasons.push('result-submitted');
   }
 
-  // result-changed: both non-null and different.
+  // result-changed: both non-null and different. Compare from the
+  // watched user's POV (matches how lastSeenResult is stored); the
+  // raw scores are order-sensitive (player1 vs player2).
   if (
     prev.lastSeenResult !== null &&
     next.score1 !== null &&
     next.score2 !== null
   ) {
-    // Convert scores to a result label for comparison
-    const newResult = scoresToResult(next.score1, next.score2);
+    const newResult = scoresToResult(next.score1, next.score2, username, next);
     if (prev.lastSeenResult !== newResult) {
       reasons.push('result-changed');
     }
@@ -90,12 +92,20 @@ export function detectPairingChange(
   };
 }
 
-/** Convert a pairing's scores into a result label from the POV of player1. */
+/** Convert a pairing's scores into a result label from the POV of
+ *  the watched username. `pairing` identifies which side (player1/
+ *  player2) the username is on so the label matches the format used
+ *  when the watch snapshot is updated. */
 function scoresToResult(
   score1: number,
   score2: number,
+  username: string,
+  pairing: { player1: string; player2: string },
 ): 'win' | 'loss' | 'draw' | 'bye' {
-  if (score1 > score2) return 'win';
-  if (score2 > score1) return 'loss';
-  return 'draw';
+  if (score1 === score2) return 'draw';
+  const isPlayer1 = pairing.player1 === username;
+  const userScore = isPlayer1 ? score1 : score2;
+  const oppScore = isPlayer1 ? score2 : score1;
+  if (userScore > oppScore) return 'win';
+  return 'loss';
 }

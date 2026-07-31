@@ -32,13 +32,13 @@ function pairing(overrides?: Partial<EventPairing>): EventPairing {
 
 describe('detectPairingChange', () => {
   it('new-round fires when prev had no round and now there is one', () => {
-    const result = detectPairingChange(prev({ lastSeenRound: null }), pairing(), 2);
+    const result = detectPairingChange(prev({ lastSeenRound: null }), pairing(), 2, 'Alice');
     expect(result.changed).toBe(true);
     expect(result.reasons).toContain('new-round');
   });
 
   it('round-changed fires when round number differs', () => {
-    const result = detectPairingChange(prev({ lastSeenRound: 1 }), pairing(), 2);
+    const result = detectPairingChange(prev({ lastSeenRound: 1 }), pairing(), 2, 'Alice');
     expect(result.changed).toBe(true);
     expect(result.reasons).toContain('round-changed');
     expect(result.reasons).not.toContain('new-round');
@@ -49,6 +49,7 @@ describe('detectPairingChange', () => {
       prev({ lastSeenRound: 1, lastSeenTable: 1 }),
       pairing({ tableNumber: 2 }),
       1,
+      'Alice',
     );
     expect(result.changed).toBe(true);
     expect(result.reasons).toContain('table-changed');
@@ -59,6 +60,7 @@ describe('detectPairingChange', () => {
       prev({ lastSeenRound: 1, lastSeenOpponent: 'Charlie' }),
       pairing({ player1: 'Alice', player2: 'Bob' }),
       1,
+      'Alice',
     );
     expect(result.changed).toBe(true);
     expect(result.reasons).toContain('opponent-changed');
@@ -69,6 +71,7 @@ describe('detectPairingChange', () => {
       prev({ lastSeenRound: 1, lastSeenOpponent: 'Alice' }),
       pairing({ player1: 'Alice', player2: 'Bob' }),
       1,
+      'Alice',
     );
     expect(result.changed).toBe(false);
     expect(result.reasons).not.toContain('opponent-changed');
@@ -79,6 +82,7 @@ describe('detectPairingChange', () => {
       prev({ lastSeenRound: 1, lastSeenResult: null }),
       pairing({ score1: 2, score2: 1 }),
       1,
+      'Alice',
     );
     expect(result.changed).toBe(true);
     expect(result.reasons).toContain('result-submitted');
@@ -89,9 +93,26 @@ describe('detectPairingChange', () => {
       prev({ lastSeenRound: 1, lastSeenResult: 'win' }),
       pairing({ score1: 0, score2: 2 }),
       1,
+      'Alice',
     );
     expect(result.changed).toBe(true);
     expect(result.reasons).toContain('result-changed');
+  });
+
+  it('result-changed uses the watched user\'s POV (player2)', () => {
+    // Regression: scoresToResult previously compared from player1's POV
+    // while lastSeenResult is stored from the watched user's POV. When
+    // the watched user is player2, flipping score1<->score2 changed the
+    // "win"/"loss" label relative to the stored result and the diff
+    // either fired spuriously or missed a real change.
+    const result = detectPairingChange(
+      prev({ lastSeenRound: 1, lastSeenResult: 'win' }),
+      pairing({ player1: 'Alice', player2: 'Bob', score1: 0, score2: 2 }),
+      1,
+      'Bob', // watched user is player2
+    );
+    expect(result.changed).toBe(false);
+    expect(result.reasons).not.toContain('result-changed');
   });
 
   it('multiple reasons can fire in one tick', () => {
@@ -99,6 +120,7 @@ describe('detectPairingChange', () => {
       prev({ lastSeenRound: null }),
       pairing({ tableNumber: 3, score1: 1, score2: 0 }),
       1,
+      'Alice',
     );
     expect(result.changed).toBe(true);
     expect(result.reasons).toContain('new-round');
@@ -115,6 +137,7 @@ describe('detectPairingChange', () => {
       }),
       pairing({ tableNumber: 1 }),
       1,
+      'Alice',
     );
     expect(result.changed).toBe(false);
     expect(result.reasons).toEqual([]);

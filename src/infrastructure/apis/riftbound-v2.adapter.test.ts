@@ -493,4 +493,30 @@ describe('RiftboundV2Adapter.getEventDetail', () => {
     // Registrations still fetched
     expect(out!.registrations).toHaveLength(11);
   });
+
+  it('caches the detail by default and bypasses the cache on read with { fresh: true }', async () => {
+    mockDetailRoutes(fetchSpy);
+
+    // First call: cache miss, fetches everything
+    await adapter.getEventDetail(799609, baseLocation);
+    const afterFirst = fetchSpy.mock.calls.length;
+    expect(afterFirst).toBeGreaterThan(0);
+
+    // Second call within TTL: cache hit, no new fetches
+    await adapter.getEventDetail(799609, baseLocation);
+    expect(fetchSpy.mock.calls.length).toBe(afterFirst);
+
+    // Fresh call: bypasses the cache on read, fetches again. This is
+    // the watcher path — without the bypass, a round transition the
+    // upstream just published would be hidden by a cache entry that
+    // was written up to CACHE_TTL_MS earlier.
+    await adapter.getEventDetail(799609, baseLocation, { fresh: true });
+    const afterFresh = fetchSpy.mock.calls.length;
+    expect(afterFresh).toBeGreaterThan(afterFirst);
+
+    // The fresh fetch updates the cache, so a subsequent default call
+    // hits the fresh snapshot (no extra fetches) rather than refetching.
+    await adapter.getEventDetail(799609, baseLocation);
+    expect(fetchSpy.mock.calls.length).toBe(afterFresh);
+  });
 });

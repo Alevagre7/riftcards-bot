@@ -35,9 +35,15 @@ export interface IEventRepository {
   /** Fetch the live detail bundle (event + registrations + current
    *  round's pairings/standings). Returns null if the event doesn't
    *  exist (404). Throws ApiResponseError / ApiTimeoutError on
-   *  transient failures. */
+   *  transient failures.
+   *
+   *  `options.fresh` — skip any in-adapter cache and don't write the
+   *  result back. The watcher uses this to see round transitions the
+   *  moment the upstream publishes them rather than reading a detail
+   *  that was captured up to CACHE_TTL_MS earlier. */
   getEventDetail(
     id: number,
     location: EventLocation,
+    options?: { fresh?: boolean },
   ): Promise<EventDetail | null>;
 }
