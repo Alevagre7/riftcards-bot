@@ -7,6 +7,7 @@ import { formatEventList } from '../formatters/event-list-formatter.js';
 import { formatEventDetail } from '../formatters/event-detail-formatter.js';
 import { setupFlow } from '../state/setup-flow.js';
 import { eventsPaginationState } from '../state/events-pagination-state.js';
+import { eventDetailOrigin } from '../state/event-detail-origin.js';
 import { stripCommand } from '../utils/strip-command.js';
 import { kmToMiles } from '../../utils/units.js';
 
@@ -174,11 +175,17 @@ export async function renderEventDetail(
     // Detail failure → isStarted stays undefined (show everything)
   }
 
-  // Default: show "Back to list" only when the user actually has a
-  // list context (eventsPaginationState is set by renderEventList).
-  // An event fetched by id/URL clears that state, so the button stays
-  // hidden even after detail → leaderboard → back-to-event round trips.
-  const showBackToList = options?.showBackToList ?? (userId != null && eventsPaginationState.get(userId) != null);
+  // Default: show "Back to list" only when the user has a list
+  // context (eventsPaginationState, set by renderEventList) AND this
+  // event was not opened directly via /events <id> or a locator URL
+  // (eventDetailOrigin, per-event). A direct fetch marks the origin
+  // so the button stays hidden across leaderboard/rounds →
+  // back-to-event round trips, even if a stale "Back to list" tap
+  // re-arms the pagination state.
+  const showBackToList = options?.showBackToList
+    ?? (userId != null
+      && eventsPaginationState.get(userId) != null
+      && !eventDetailOrigin.isDirect(userId, id));
   const result = formatEventDetail(event, registrations, {
     privateChat: ctx.chat?.type === 'private',
     ...(isStarted !== undefined ? { isStarted } : {}),
@@ -331,12 +338,13 @@ export function createEventsCommand(deps: EventsCommandDeps) {
         return;
       }
       // No list context exists for an id/URL fetch: clear any stale
-      // list state so the detail page (and callbacks that re-render
-      // it, e.g. leaderboard → back-to-event) keep hiding "Back to
-      // list".
+      // list state and mark this event as direct so the detail page
+      // (and callbacks that re-render it, e.g. leaderboard →
+      // back-to-event) keep hiding "Back to list".
       const userId = ctx.from?.id;
       if (userId != null) {
         eventsPaginationState.clear(userId);
+        eventDetailOrigin.markDirect(userId, id);
       }
       await renderEventDetail(ctx, deps, id, { showBackToList: false });
       return;
