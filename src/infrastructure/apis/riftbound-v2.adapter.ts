@@ -554,6 +554,27 @@ export class RiftboundV2Adapter implements IEventRepository {
     return detail;
   }
 
+  async getEventMatches(roundId: number): Promise<EventPairing[]> {
+    // The matches endpoint is round-scoped, not event-scoped. The
+    // port takes only the roundId; the handler resolves the round
+    // from the event detail's tournament_phases.
+    const matches = await this.fetchPaginated(
+      `/tournament-rounds/${roundId}/matches/paginated/`,
+      new URLSearchParams({ page_size: '10', avoid_cache: 'false' }),
+      MatchesResponseSchema,
+    );
+    return matches.filter((m) => !m.match_is_bye).map(mapV2MatchToPairing);
+  }
+
+  async getEventStandings(roundId: number): Promise<EventStanding[]> {
+    const rows = await this.fetchPaginated(
+      `/tournament-rounds/${roundId}/standings/paginated/`,
+      new URLSearchParams({ page_size: '10' }),
+      StandingsResponseSchema,
+    );
+    return rows.map(mapV2StandingToLeaderboardEntry);
+  }
+
   private pruneCache(): void {
     if (this.cache.size <= MAX_CACHE_SIZE) return;
     const now = Date.now();

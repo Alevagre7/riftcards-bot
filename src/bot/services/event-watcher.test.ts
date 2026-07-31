@@ -25,6 +25,8 @@ function mockEventRepository(): IEventRepository {
     getEvents: vi.fn(),
     getEventById: vi.fn(),
     getEventRegistrations: vi.fn(),
+    getEventMatches: vi.fn(),
+    getEventStandings: vi.fn(),
     getEventDetail: vi.fn(),
   };
 }

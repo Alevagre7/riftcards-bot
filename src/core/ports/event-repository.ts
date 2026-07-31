@@ -1,6 +1,6 @@
 import { Event } from '../entities/event.js';
 import { EventRegistration } from '../entities/event-registration.js';
-import { EventDetail } from '../entities/event-detail.js';
+import { EventDetail, EventPairing, EventStanding } from '../entities/event-detail.js';
 
 // EventLocation is the per-call location passed to IEventRepository.
 // The location may come from the user's saved preference, the global
@@ -32,7 +32,18 @@ export interface IEventRepository {
     location: EventLocation,
   ): Promise<EventRegistration[]>;
 
-  /** Fetch the live detail bundle (event + registrations + current
+  /** Fetch the pairings for a specific round. Used by the leaderboard/
+   *  all-tables handler to render a non-current round when the user
+   *  navigates with the ←/→ round buttons. Returns an empty array
+   *  when the round has no pairings (e.g. UPCOMING). */
+  getEventMatches(roundId: number): Promise<EventPairing[]>;
+
+  /** Fetch the standings for a specific round. Used by the leaderboard
+   *  handler to render standings for a past round. Returns an empty
+   *  array when the round has no standings yet. */
+  getEventStandings(roundId: number): Promise<EventStanding[]>;
+
+  /** Fetch the live detail bundle
    *  round's pairings/standings). Returns null if the event doesn't
    *  exist (404). Throws ApiResponseError / ApiTimeoutError on
    *  transient failures.

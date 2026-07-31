@@ -4,6 +4,8 @@ import { IEventRepository, EventLocation } from '../../core/ports/event-reposito
 import { IUserSettingsRepository } from '../../core/ports/user-settings-repository.js';
 import { IEventWatchRepository } from '../../core/ports/event-watch-repository.js';
 import { EventRegistration } from '../../core/entities/event-registration.js';
+import { EventRoundSummary } from '../../core/entities/event.js';
+import { EventPairing, EventStanding } from '../../core/entities/event-detail.js';
 import { renderEventList, renderEventDetail, renderEventsPage } from '../commands/events.js';
 import { formatEventLeaderboard } from '../formatters/event-leaderboard-formatter.js';
 import { formatEventRounds } from '../formatters/event-rounds-formatter.js';

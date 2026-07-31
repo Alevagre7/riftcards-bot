@@ -51,6 +51,8 @@ function mockEventRepo(): IEventRepository {
     getEvents: vi.fn().mockResolvedValue([]),
     getEventById: vi.fn().mockResolvedValue(null),
     getEventRegistrations: vi.fn().mockResolvedValue([]),
+    getEventMatches: vi.fn().mockResolvedValue([]),
+    getEventStandings: vi.fn().mockResolvedValue([]),
     getEventDetail: vi.fn().mockResolvedValue(null),
   };
 }
