@@ -46,9 +46,9 @@ describe('formatEventLeaderboard', () => {
       ],
     });
 
-    expect(out).toContain('#1 Alice (3-1)');
-    expect(out).toContain('#2 Bob (2-2)');
-    expect(out).toContain('#3 Charlie (1-3)');
+    expect(out).toContain('\uD83E\uDD47 <b>Alice</b> (3-1)');
+    expect(out).toContain('\uD83E\uDD48 <b>Bob</b> (2-2)');
+    expect(out).toContain('\uD83E\uDD49 <b>Charlie</b> (1-3)');
   });
 
   it('shows "No standings available yet" when standings is empty', () => {

@@ -21,6 +21,22 @@ export interface EventDetailResult {
   buttons: InlineKeyboardButton[][];
 }
 
+// Status chip shown next to the event name. Colorful at a glance for
+// anyone scanning the chat: green = upcoming, yellow = in progress,
+// red = complete. Empty string (no chip) for anything unexpected.
+function statusChip(displayStatus: Event['displayStatus']): string {
+  switch (displayStatus) {
+    case 'upcoming':
+      return '\uD83D\uDFE2'; // 🟢
+    case 'inProgress':
+      return '\uD83D\uDFE1'; // 🟡
+    case 'complete':
+      return '\uD83D\uDD34'; // 🔴
+    default:
+      return '';
+  }
+}
+
 export function formatEventDetail(
   event: Event,
   registrations: readonly EventRegistration[] | 'unavailable',
@@ -41,8 +57,9 @@ export function formatEventDetail(
 
   const lines: string[] = [];
 
-  // Header
-  lines.push(`\uD83D\uDCC5 <b>${escapeHtml(event.name)}</b>`);
+  // Header: name + colored status chip
+  const chip = statusChip(event.displayStatus);
+  lines.push(`\uD83D\uDCC5 <b>${escapeHtml(event.name)}</b>${chip ? ` ${chip}` : ''}`);
 
   // Date/time (event's own timezone)
   const start = new Date(event.startDatetime);
@@ -50,10 +67,12 @@ export function formatEventDetail(
   const dateStr = dateFmt.format(start);
   const startTime = timeFmt.format(start);
   const endTime = timeFmt.format(end);
-  lines.push(`\uD83D\uDD50 ${dateStr} \u00B7 ${startTime}\u2013${endTime} (${event.timezone})`);
+  lines.push(
+    `\uD83D\uDD50 <b>${dateStr} \u00B7 ${startTime}\u2013${endTime}</b> (${event.timezone})`,
+  );
 
   // Store
-  lines.push(`\uD83C\uDFEA ${escapeHtml(event.store.name)}`);
+  lines.push(`\uD83C\uDFEA <b>${escapeHtml(event.store.name)}</b>`);
 
   // Address
   if (event.store.fullAddress) {
@@ -63,22 +82,24 @@ export function formatEventDetail(
   // Format / event type
   if (event.gameplayFormatName || event.eventType) {
     const fc = event.gameplayFormatName
-      ? `\uD83C\uDFAE ${event.gameplayFormatName}${event.eventType ? ` \u00B7 ${event.eventType}` : ''}`
-      : `\uD83C\uDFAE ${event.eventType}`;
+      ? `\uD83C\uDFAE <b>${escapeHtml(event.gameplayFormatName)}</b>${event.eventType ? ` \u00B7 ${escapeHtml(event.eventType)}` : ''}`
+      : `\uD83C\uDFAE ${escapeHtml(event.eventType)}`;
     lines.push(fc);
   }
 
   // Capacity
-  lines.push(`\uD83D\uDC65 ${event.registeredCount}/${event.capacity} jugadores`);
+  lines.push(
+    `\uD83D\uDC65 <b>${event.registeredCount}/${event.capacity}</b> players`,
+  );
 
   // Description
   if (event.description) {
-    lines.push(`\uD83D\uDCDD ${escapeHtml(event.description)}`);
+    lines.push(`\uD83D\uDCDD <i>${escapeHtml(event.description)}</i>`);
   }
 
   // Cost
   if (event.costInCents === 0) {
-    lines.push('\uD83D\uDCB0 Free');
+    lines.push('\uD83D\uDCB0 <b>Free</b>');
   } else if (event.costInCents != null) {
     const currency = event.currency || 'EUR';
     const amountFmt = new Intl.NumberFormat('en-GB', {
@@ -86,21 +107,24 @@ export function formatEventDetail(
       currency,
       currencyDisplay: 'symbol',
     });
-    lines.push(`\uD83D\uDCB0 ${amountFmt.format(event.costInCents / 100)}`);
+    lines.push(`\uD83D\uDCB0 <b>${amountFmt.format(event.costInCents / 100)}</b>`);
   }
 
   // Players
   if (registrations === 'unavailable') {
-    lines.push('\uD83D\uDC65 Players: unavailable');
+    lines.push('\uD83D\uDC64 Players: unavailable');
   } else if (registrations.length > 0) {
-    lines.push(`Players (${registrations.length}):`);
+    lines.push(`\uD83D\uDC64 Players (${registrations.length}):`);
     for (const r of registrations) {
-      lines.push(`  \u2022 ${escapeHtml(r.name)} \u2014 ${r.status}`);
+      lines.push(
+        `  \u2022 <b>${escapeHtml(r.name)}</b> \u2014 ${escapeHtml(r.status)}`,
+      );
     }
   }
 
   // Locator page (synthesized — the V2 API has no locator URL field)
-  lines.push(`Locator: https://locator.riftbound.uvsgames.com/events/${event.id}`);
+  const locatorUrl = `https://locator.riftbound.uvsgames.com/events/${event.id}`;
+  lines.push(`\uD83D\uDD17 <a href="${locatorUrl}">${locatorUrl}</a>`);
 
   // Build buttons using the numeric event id for callback data
   const buttons: InlineKeyboardButton[][] = [];
@@ -110,14 +134,14 @@ export function formatEventDetail(
   // is unreachable)
   if (options?.isStarted !== false) {
     buttons.push(
-      [{ text: 'Leaderboard', callback_data: `event:${event.id}:leaderboard` }],
-      [{ text: 'All tables', callback_data: `event:${event.id}:rounds` }],
+      [{ text: '\uD83C\uDFC6 Leaderboard', callback_data: `event:${event.id}:leaderboard` }],
+      [{ text: '\uD83D\uDCCB All tables', callback_data: `event:${event.id}:rounds` }],
     );
   }
 
   // Watch button only in private chats
   if (options?.privateChat === true) {
-    buttons.push([{ text: 'Watch', callback_data: `event:${event.id}:watch:start` }]);
+    buttons.push([{ text: '\uD83D\uDC41 Watch', callback_data: `event:${event.id}:watch:start` }]);
   }
 
   buttons.push([{ text: '\u2190 Back to list', callback_data: 'event:list' }]);

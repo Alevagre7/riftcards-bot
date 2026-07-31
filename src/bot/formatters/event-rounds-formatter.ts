@@ -2,6 +2,7 @@
 
 import { EventRoundSummary } from '../../core/entities/event.js';
 import { EventPairing } from '../../core/entities/event-detail.js';
+import { escapeHtml } from './card-formatter.js';
 
 export interface RoundsData {
   /** The event display name. */
@@ -16,7 +17,7 @@ export function formatEventRounds(data: RoundsData): string {
   const lines: string[] = [];
 
   lines.push(
-    `\uD83C\uDFB2 ${data.name} \u2014 Round ${data.currentRound?.roundNumber ?? '?'}`,
+    `\uD83C\uDFB2 <b>${escapeHtml(data.name)}</b> \u2014 Round ${data.currentRound?.roundNumber ?? '?'}`,
   );
   lines.push('');
 
@@ -35,7 +36,7 @@ export function formatEventRounds(data: RoundsData): string {
         ? `${pairing.score1}-${pairing.score2}`
         : 'not reported';
     lines.push(
-      `Table ${pairing.tableNumber} \u00B7 ${pairing.player1} vs ${pairing.player2} \u00B7 ${score}`,
+      `Table ${pairing.tableNumber} \u00B7 ${escapeHtml(pairing.player1)} vs ${escapeHtml(pairing.player2)} \u00B7 ${score}`,
     );
   }
 

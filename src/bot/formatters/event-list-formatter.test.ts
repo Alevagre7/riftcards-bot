@@ -54,7 +54,7 @@ describe('formatEventList', () => {
 
   it('uses singular "day" for a 1-day window with one event', () => {
     const out = formatEventList([baseEvent], 1);
-    expect(out.body).toBe('1 event in the next 1 day');
+    expect(out.body).toBe('\uD83D\uDCC5 <b>1</b> event in the next 1 day');
   });
 
   it('uses singular "day" in the empty state for a 1-day window', () => {
@@ -69,7 +69,7 @@ describe('formatEventList', () => {
 
   it('uses singular "event" for 1 event', () => {
     const out = formatEventList([baseEvent], 7);
-    expect(out.body).toBe('1 event in the next 7 days');
+    expect(out.body).toBe('\uD83D\uDCC5 <b>1</b> event in the next 7 days');
   });
 
   it('uses plural "events" for multiple events', () => {
@@ -78,7 +78,7 @@ describe('formatEventList', () => {
       { ...baseEvent, id: 2 },
     ];
     const out = formatEventList(events, 7);
-    expect(out.body).toMatch(/2 events/);
+    expect(out.body).toMatch(/<b>2<\/b> events/);
   });
 
   it('produces 1 button row for 1 event', () => {

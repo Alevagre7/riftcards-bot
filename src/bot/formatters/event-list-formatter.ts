@@ -77,14 +77,14 @@ export function formatEventList(
 
   if (events.length === 0) {
     return {
-      body: `No events found in your area in the next ${dayLabel}.`,
+      body: `\uD83D\uDCED No events found in your area in the next ${dayLabel}.`,
       buttons: [],
     };
   }
 
   // Body: single count line
   const eventLabel = events.length === 1 ? 'event' : 'events';
-  const body = `${events.length} ${eventLabel} in the next ${dayLabel}`;
+  const body = `\uD83D\uDCC5 <b>${events.length}</b> ${eventLabel} in the next ${dayLabel}`;
 
   const totalPages = Math.ceil(events.length / pageSize);
   // Clamp currentPage to valid range

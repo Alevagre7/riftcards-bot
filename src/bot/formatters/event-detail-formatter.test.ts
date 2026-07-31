@@ -79,8 +79,8 @@ describe('formatEventDetail', () => {
     expect(body(ev)).not.toContain('\uD83C\uDFAE');
   });
 
-  it('shows capacity as registered/max jugadores', () => {
-    expect(body()).toContain('8/32 jugadores');
+  it('shows capacity as bold registered/max players', () => {
+    expect(body()).toContain('<b>8/32</b> players');
   });
 
   it('shows "Free" when costInCents is 0', () => {
@@ -143,59 +143,59 @@ describe('formatEventDetail', () => {
   it('returns buttons with Leaderboard, All tables, and Back when isStarted is true', () => {
     const result = formatEventDetail(baseEvent, [], { isStarted: true });
     const texts = result.buttons.flat().map((b) => b.text);
-    expect(texts).toContain('Leaderboard');
-    expect(texts).toContain('All tables');
+    expect(texts).toContain('\uD83C\uDFC6 Leaderboard');
+    expect(texts).toContain('\uD83D\uDCCB All tables');
     expect(texts).toContain('\u2190 Back to list');
   });
 
   it('returns buttons with Leaderboard, All tables, and Back when isStarted is undefined (fallback)', () => {
     const result = formatEventDetail(baseEvent, []);
     const texts = result.buttons.flat().map((b) => b.text);
-    expect(texts).toContain('Leaderboard');
-    expect(texts).toContain('All tables');
+    expect(texts).toContain('\uD83C\uDFC6 Leaderboard');
+    expect(texts).toContain('\uD83D\uDCCB All tables');
     expect(texts).toContain('\u2190 Back to list');
   });
 
   it('omits Leaderboard and All tables when isStarted is false', () => {
     const result = formatEventDetail(baseEvent, [], { isStarted: false });
     const texts = result.buttons.flat().map((b) => b.text);
-    expect(texts).not.toContain('Leaderboard');
-    expect(texts).not.toContain('All tables');
+    expect(texts).not.toContain('\uD83C\uDFC6 Leaderboard');
+    expect(texts).not.toContain('\uD83D\uDCCB All tables');
     expect(texts).toContain('\u2190 Back to list');
   });
 
   it('shows Watch button alongside Leaderboard when isStarted is true and privateChat', () => {
     const result = formatEventDetail(baseEvent, [], { privateChat: true, isStarted: true });
     const texts = result.buttons.flat().map((b) => b.text);
-    expect(texts).toContain('Leaderboard');
-    expect(texts).toContain('Watch');
+    expect(texts).toContain('\uD83C\uDFC6 Leaderboard');
+    expect(texts).toContain('\uD83D\uDC41 Watch');
   });
 
   it('shows Watch button without Leaderboard when isStarted is false and privateChat', () => {
     const result = formatEventDetail(baseEvent, [], { privateChat: true, isStarted: false });
     const texts = result.buttons.flat().map((b) => b.text);
-    expect(texts).not.toContain('Leaderboard');
-    expect(texts).not.toContain('All tables');
-    expect(texts).toContain('Watch');
+    expect(texts).not.toContain('\uD83C\uDFC6 Leaderboard');
+    expect(texts).not.toContain('\uD83D\uDCCB All tables');
+    expect(texts).toContain('\uD83D\uDC41 Watch');
     expect(texts).toContain('\u2190 Back to list');
   });
 
   it('includes Watch button in private chat', () => {
     const result = formatEventDetail(baseEvent, [], { privateChat: true });
     const texts = result.buttons.flat().map((b) => b.text);
-    expect(texts).toContain('Watch');
+    expect(texts).toContain('\uD83D\uDC41 Watch');
   });
 
   it('omits Watch button when not in private chat', () => {
     const result = formatEventDetail(baseEvent, []);
     const texts = result.buttons.flat().map((b) => b.text);
-    expect(texts).not.toContain('Watch');
+    expect(texts).not.toContain('\uD83D\uDC41 Watch');
   });
 
   it('uses leaderboard callback_data for Leaderboard button', () => {
     const result = formatEventDetail(baseEvent, [], { isStarted: true });
     const btn = result.buttons.flat().find(
-      (b): b is InlineKeyboardButton.CallbackButton => b.text === 'Leaderboard' && 'callback_data' in b,
+      (b): b is InlineKeyboardButton.CallbackButton => b.text === '\uD83C\uDFC6 Leaderboard' && 'callback_data' in b,
     );
     expect(btn?.callback_data).toBe('event:42:leaderboard');
   });
@@ -203,7 +203,7 @@ describe('formatEventDetail', () => {
   it('uses correct callback_data for Watch button', () => {
     const result = formatEventDetail(baseEvent, [], { privateChat: true });
     const watchBtn = result.buttons.flat().find(
-      (b): b is InlineKeyboardButton.CallbackButton => b.text === 'Watch' && 'callback_data' in b,
+      (b): b is InlineKeyboardButton.CallbackButton => b.text === '\uD83D\uDC41 Watch' && 'callback_data' in b,
     );
     expect(watchBtn?.callback_data).toBe('event:42:watch:start');
   });

@@ -2,6 +2,7 @@
 // event's current round.
 
 import { EventStanding } from '../../core/entities/event-detail.js';
+import { escapeHtml } from './card-formatter.js';
 
 export interface LeaderboardData {
   readonly name: string;
@@ -9,11 +10,20 @@ export interface LeaderboardData {
   readonly standings: readonly EventStanding[];
 }
 
+// Top-3 get medals, everyone else a plain #rank. The medal prefix
+// makes the podium readable at a glance.
+function rankLabel(rank: number): string {
+  if (rank === 1) return '\uD83E\uDD47'; // 🥇
+  if (rank === 2) return '\uD83E\uDD48'; // 🥈
+  if (rank === 3) return '\uD83E\uDD49'; // 🥉
+  return `#${rank}`;
+}
+
 export function formatEventLeaderboard(data: LeaderboardData): string {
   const lines: string[] = [];
 
   lines.push(
-    `\uD83C\uDFC6 ${data.name} \u2014 Round ${data.currentRound ?? '?'}`,
+    `\uD83C\uDFC6 <b>${escapeHtml(data.name)}</b> \u2014 Round ${data.currentRound ?? '?'}`,
   );
   lines.push('');
 
@@ -23,7 +33,9 @@ export function formatEventLeaderboard(data: LeaderboardData): string {
   }
 
   for (const entry of data.standings) {
-    lines.push(`#${entry.rank} ${entry.name} (${entry.wins}-${entry.losses})`);
+    lines.push(
+      `${rankLabel(entry.rank)} <b>${escapeHtml(entry.name)}</b> (${entry.wins}-${entry.losses})`,
+    );
   }
 
   return lines.join('\n');
