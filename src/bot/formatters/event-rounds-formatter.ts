@@ -1,25 +1,40 @@
-// formatEventRounds — renders round-by-round pairing data.
-//
-// The locator currently only exposes the current round in SSR HTML,
-// so this formatter renders that single round and appends a note
-// that the round-by-round view is limited. The structure allows
-// future extension when more round data becomes available.
+// formatEventRounds — renders the current round's pairings.
 
-import { LocatorEventData } from '../../core/ports/locator-repository.js';
+import { EventRoundSummary } from '../../core/entities/event.js';
+import { EventPairing } from '../../core/entities/event-detail.js';
+import { escapeHtml } from './card-formatter.js';
 
 export interface RoundsData {
-  /** The current round pairings (only data source today). */
-  readonly currentRound: number | null;
+  /** The event display name. */
+  readonly name: string;
+  /** The derived current round (null when none is active). */
+  readonly currentRound: EventRoundSummary | null;
   /** Flat list of pairings for the current round. */
-  readonly pairings: readonly LocatorEventData['pairings'][number][];
+  readonly pairings: readonly EventPairing[];
 }
 
-export function formatEventRounds(data: LocatorEventData): string {
+// Round status → colored emoji chip. Makes the round's state
+// obvious at a glance without parsing the raw status string.
+function roundStatusChip(status: string | undefined): string {
+  switch (status) {
+    case 'IN_PROGRESS':
+      return '\uD83D\uDFE1'; // 🟡
+    case 'COMPLETE':
+      return '\u2705';       // ✅
+    case 'UPCOMING':
+    case 'PENDING':
+      return '\u23F3';       // ⏳
+    default:
+      return '';
+  }
+}
+
+export function formatEventRounds(data: RoundsData): string {
   const lines: string[] = [];
 
-  lines.push(
-    `\uD83C\uDFB2 ${data.name} \u2014 Round ${data.currentRound ?? '?'}`,
-  );
+  const chip = roundStatusChip(data.currentRound?.status);
+  const header = `\uD83C\uDFB2 <b>${escapeHtml(data.name)}</b> \u2014 Round <b>${data.currentRound?.roundNumber ?? '?'}</b>`;
+  lines.push(chip ? `${header} ${chip}` : header);
   lines.push('');
 
   if (data.pairings.length === 0) {
@@ -32,19 +47,14 @@ export function formatEventRounds(data: LocatorEventData): string {
   }
 
   for (const pairing of data.pairings) {
-    const score =
-      pairing.score1 != null && pairing.score2 != null
-        ? `${pairing.score1}-${pairing.score2}`
-        : 'not reported';
+    const reported = pairing.score1 != null && pairing.score2 != null;
+    const score = reported
+      ? `\u2705 <b>${pairing.score1}\u2013${pairing.score2}</b>`
+      : '\u23F3 <i>not reported</i>';
     lines.push(
-      `Table ${pairing.tableNumber} \u00B7 ${pairing.player1} vs ${pairing.player2} \u00B7 ${score}`,
+      `\uD83E\uDDBA <b>Table ${pairing.tableNumber}</b> \u00B7 \u2694\uFE0F <b>${escapeHtml(pairing.player1)}</b> vs <b>${escapeHtml(pairing.player2)}</b> \u00B7 ${score}`,
     );
   }
-
-  lines.push('');
-  lines.push(
-    '(Round-by-round view requires more data than the locator currently exposes; showing current round only.)',
-  );
 
   return lines.join('\n');
 }

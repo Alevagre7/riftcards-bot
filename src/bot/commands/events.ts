@@ -2,7 +2,6 @@ import { Context, Markup } from 'telegraf';
 import { Event } from '../../core/entities/event.js';
 import { IEventRepository, EventLocation } from '../../core/ports/event-repository.js';
 import { IUserSettingsRepository } from '../../core/ports/user-settings-repository.js';
-import { ILocatorRepository } from '../../core/ports/locator-repository.js';
 import { IEventWatchRepository } from '../../core/ports/event-watch-repository.js';
 import { formatEventList } from '../formatters/event-list-formatter.js';
 import { formatEventDetail } from '../formatters/event-detail-formatter.js';
@@ -24,11 +23,11 @@ const EVENT_WINDOW_OPTIONS: readonly { label: string; days: number }[] = [
 
 // IN_PROGRESS_LOOKBACK_HOURS widens the /events fetch window backwards
 // from `now` so events that have already started but not yet ended are
-// returned by the upstream. The upstream (both riftfound and the
-// legacy API) filters on startDate, not endDate, so a [now, now+days]
-// window silently drops in-progress events — exactly when the Watch
-// flow is most useful. 12h covers typical 4-8h tournaments, including
-// ones that started yesterday morning and are still running.
+// returned by the upstream. The upstream filters on startDate, not
+// endDate, so a [now, now+days] window silently drops in-progress
+// events — exactly when the Watch flow is most useful. 12h covers
+// typical 4-8h tournaments, including ones that started yesterday
+// morning and are still running.
 const IN_PROGRESS_LOOKBACK_HOURS = 12;
 
 // ---------------------------------------------------------------------------
@@ -47,7 +46,6 @@ export interface EventsCommandDeps {
   // existing CLI; env-overridable via EVENTS_DAYS_AHEAD.
   daysAhead: number;
   // Optional: override Date.now() for testability.
-  locatorRepository?: ILocatorRepository;
   watchRepository?: IEventWatchRepository;
   now?: () => Date;
 }
@@ -98,14 +96,18 @@ export async function renderEventList(
   const end = new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
   const rawEvents = await deps.eventRepository.getEvents(startAfter, end, location);
 
-  // Post-filter: drop events whose endDate is already in the past.
+  // Post-filter: drop events whose end datetime is already in the past.
   // The upstream may return events that started within the lookback
   // but have since ended (e.g. a 1h event that started 11h ago).
-  const events = rawEvents.filter((ev) => ev.endDate.getTime() >= now.getTime());
+  const events = rawEvents.filter(
+    (ev) => new Date(ev.endDatetime).getTime() >= now.getTime(),
+  );
 
-  // Sort by startDate ascending — in-progress events (started in the
+  // Sort by start ascending — in-progress events (started in the
   // past) bubble to the top automatically.
-  const sorted = [...events].sort((a, b) => a.startDate.getTime() - b.startDate.getTime());
+  const sorted = [...events].sort(
+    (a, b) => new Date(a.startDatetime).getTime() - new Date(b.startDatetime).getTime(),
+  );
 
   // Store in pagination state for Prev/Next navigation
   if (userId != null) {
@@ -140,14 +142,15 @@ export async function renderEventWindowMenu(ctx: Context): Promise<void> {
 export async function renderEventDetail(
   ctx: Context,
   deps: EventsCommandDeps,
-  id: string,
+  id: number,
+  options?: { showBackToList?: boolean },
 ): Promise<void> {
   await ctx.sendChatAction('typing');
 
   const userId = ctx.from?.id;
   const location = await resolveLocation(userId, deps);
 
-  // Fetch event + registrations in parallel; registrations can fail
+  // Fetch event + registrations in parallel
   const [event, registrations] = await Promise.all([
     deps.eventRepository.getEventById(id, location),
     deps.eventRepository.getEventRegistrations(id, location).catch((err) => {
@@ -161,15 +164,39 @@ export async function renderEventDetail(
     return;
   }
 
+  // Determine if the event has started via the detail bundle
+  // (detail endpoint failure must not break the detail page)
+  let isStarted: boolean | undefined;
+  try {
+    const detail = await deps.eventRepository.getEventDetail(event.id, location);
+    isStarted = detail?.currentRound != null ? true : false;
+  } catch {
+    // Detail failure → isStarted stays undefined (show everything)
+  }
+
+  // Default: show "Back to list" only when the user actually has a
+  // list context (eventsPaginationState is set by renderEventList).
+  // An event fetched by id/URL clears that state, so the button stays
+  // hidden even after detail → leaderboard → back-to-event round trips.
+  const showBackToList = options?.showBackToList ?? (userId != null && eventsPaginationState.get(userId) != null);
   const result = formatEventDetail(event, registrations, {
     privateChat: ctx.chat?.type === 'private',
+    ...(isStarted !== undefined ? { isStarted } : {}),
+    ...(showBackToList === false ? { showBackToList: false } : {}),
   });
 
-  // Always edit in place (called from a callback)
-  await ctx.editMessageText(result.body, {
-    parse_mode: 'HTML',
+  const sendOptions = {
+    parse_mode: 'HTML' as const,
     reply_markup: { inline_keyboard: result.buttons },
-  });
+  };
+  // When invoked from a callback query, edit in place. When invoked
+  // from a plain command (e.g. /events 498515), reply with a new
+  // message — editMessageText requires a callback message to edit.
+  if (ctx.callbackQuery && ctx.callbackQuery.message) {
+    await ctx.editMessageText(result.body, sendOptions);
+  } else {
+    await ctx.reply(result.body, sendOptions);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -234,7 +261,12 @@ export async function renderEventsPage(
 // Subcommand parser
 // ---------------------------------------------------------------------------
 
-type EventsAction = 'show' | 'set' | 'clear' | 'unwatch' | 'usage';
+type EventsAction = 'show' | 'set' | 'clear' | 'unwatch' | 'usage' | 'event-id';
+
+// EVENT_ID_THRESHOLD disambiguates `/events <N>` between a days
+// window (small N) and a direct event lookup (large N). V2 event
+// ids are 6-digit; a days window past 1000 days is nonsensical.
+const EVENT_ID_THRESHOLD = 1000;
 
 function parseAction(rawArgs: string): EventsAction {
   const arg = rawArgs.trim().toLowerCase();
@@ -242,8 +274,14 @@ function parseAction(rawArgs: string): EventsAction {
   if (arg === 'set' || arg.startsWith('set ')) return 'set';
   if (arg === 'clear') return 'clear';
   if (arg === 'unwatch') return 'unwatch';
-  // Numeric arg (e.g. /events 14) → show with that many days.
-  if (/^\d+$/.test(arg)) return 'show';
+  // Locator URL → direct event lookup (debug path).
+  if (/^https?:\/\/locator\.riftbound\.uvsgames\.com\/events\/\d+/.test(arg)) {
+    return 'event-id';
+  }
+  // Numeric arg: large (>= EVENT_ID_THRESHOLD) = event id, small = days.
+  if (/^\d+$/.test(arg)) {
+    return Number(arg) >= EVENT_ID_THRESHOLD ? 'event-id' : 'show';
+  }
   return 'usage';
 }
 // parseCoords: accept "<lat>, <lon>" with optional whitespace and
@@ -274,10 +312,33 @@ export function createEventsCommand(deps: EventsCommandDeps) {
         'Usage:\n' +
           '/events \u2014 upcoming events at your location (default 7 days)\n' +
           '/events &lt;N&gt; \u2014 upcoming events in the next N days\n' +
+          '/events &lt;id&gt; \u2014 show a specific event by id (debug)\n' +
+          '/events &lt;locator-url&gt; \u2014 show the event at that locator link\n' +
           '/events set \u2014 share your location (or use the Share button)\n' +
           '/events clear \u2014 forget your saved location\n' +
           '/events unwatch \u2014 stop watching the current event',
       );
+      return;
+    }
+
+    if (action === 'event-id') {
+      const trimmed = rawArgs.trim();
+      const id = /^\d+$/.test(trimmed)
+        ? Number(trimmed)
+        : Number(trimmed.match(/\/events\/(\d+)/)?.[1] ?? '0') || null;
+      if (id == null) {
+        await ctx.reply('Could not read the event id. Use a bare number or a locator URL.');
+        return;
+      }
+      // No list context exists for an id/URL fetch: clear any stale
+      // list state so the detail page (and callbacks that re-render
+      // it, e.g. leaderboard → back-to-event) keep hiding "Back to
+      // list".
+      const userId = ctx.from?.id;
+      if (userId != null) {
+        eventsPaginationState.clear(userId);
+      }
+      await renderEventDetail(ctx, deps, id, { showBackToList: false });
       return;
     }
 

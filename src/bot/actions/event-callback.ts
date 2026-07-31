@@ -2,16 +2,18 @@ import { Context } from 'telegraf';
 import type { InlineKeyboardButton } from '@telegraf/types/markup.js';
 import { IEventRepository, EventLocation } from '../../core/ports/event-repository.js';
 import { IUserSettingsRepository } from '../../core/ports/user-settings-repository.js';
-import { ILocatorRepository } from '../../core/ports/locator-repository.js';
 import { IEventWatchRepository } from '../../core/ports/event-watch-repository.js';
+import { EventRegistration } from '../../core/entities/event-registration.js';
+import { EventRoundSummary } from '../../core/entities/event.js';
+import { EventPairing, EventStanding } from '../../core/entities/event-detail.js';
 import { renderEventList, renderEventDetail, renderEventsPage } from '../commands/events.js';
-import { formatEventScoreboard } from '../formatters/event-scoreboard-formatter.js';
+import { formatEventLeaderboard } from '../formatters/event-leaderboard-formatter.js';
 import { formatEventRounds } from '../formatters/event-rounds-formatter.js';
 import { eventsPaginationState } from '../state/events-pagination-state.js';
+import { escapeHtml } from '../formatters/card-formatter.js';
 
 interface EventActionDeps {
   eventRepository: IEventRepository;
-  locatorRepository: ILocatorRepository;
   watchRepository: IEventWatchRepository;
   userSettingsRepository: IUserSettingsRepository;
   defaultLocation: EventLocation;
@@ -26,6 +28,9 @@ export function createEventActionHandler(deps: EventActionDeps) {
     if (!data || !data.startsWith('event:') && !data.startsWith('admin:')) return;
 
     await ctx.answerCbQuery();
+
+    // No-op: page label click — silent ack
+    if (data === 'event:noop') return;
 
     // Admin: stop watch
     const adminStopMatch = /^admin:stop:(\d+)$/.exec(data);
@@ -64,17 +69,41 @@ export function createEventActionHandler(deps: EventActionDeps) {
       return;
     }
 
-    // Scoreboard view
-    const scoreboardMatch = /^event:(\d+):scoreboard$/.exec(data);
-    if (scoreboardMatch) {
-      await handleScoreboard(ctx, deps, scoreboardMatch[1]!);
+    // Leaderboard view (current round)
+    const leaderboardMatch = /^event:(\d+):leaderboard$/.exec(data);
+    if (leaderboardMatch) {
+      await handleLeaderboard(ctx, deps, parseInt(leaderboardMatch[1]!, 10));
       return;
     }
 
-    // All tables / rounds view
+    // Leaderboard for a specific round (←/→ round nav)
+    const leaderboardRoundMatch = /^event:(\d+):leaderboard:round:(\d+)$/.exec(data);
+    if (leaderboardRoundMatch) {
+      await handleLeaderboard(
+        ctx,
+        deps,
+        parseInt(leaderboardRoundMatch[1]!, 10),
+        parseInt(leaderboardRoundMatch[2]!, 10),
+      );
+      return;
+    }
+
+    // All tables / rounds view (current round)
     const roundsMatch = /^event:(\d+):rounds$/.exec(data);
     if (roundsMatch) {
-      await handleRounds(ctx, deps, roundsMatch[1]!);
+      await handleRounds(ctx, deps, parseInt(roundsMatch[1]!, 10));
+      return;
+    }
+
+    // All tables for a specific round (←/→ round nav)
+    const roundsRoundMatch = /^event:(\d+):rounds:round:(\d+)$/.exec(data);
+    if (roundsRoundMatch) {
+      await handleRounds(
+        ctx,
+        deps,
+        parseInt(roundsRoundMatch[1]!, 10),
+        parseInt(roundsRoundMatch[2]!, 10),
+      );
       return;
     }
 
@@ -101,7 +130,7 @@ export function createEventActionHandler(deps: EventActionDeps) {
     // Single event detail
     const match = /^event:(\d+)$/.exec(data);
     if (match) {
-      const id = match[1]!;
+      const id = parseInt(match[1]!, 10);
       await renderEventDetail(ctx, deps, id);
       return;
     }
@@ -111,41 +140,154 @@ export function createEventActionHandler(deps: EventActionDeps) {
 }
 
 // ---------------------------------------------------------------------------
-// Scoreboard
+// Round view helpers (←/→ round nav + ← Back to event)
 // ---------------------------------------------------------------------------
 
-async function handleScoreboard(ctx: Context, deps: EventActionDeps, eventIdStr: string): Promise<void> {
-  const eventId = parseInt(eventIdStr, 10);
-  if (isNaN(eventId)) {
-    await ctx.answerCbQuery('Invalid event.');
-    return;
+// Compose the full keyboard for a leaderboard / all-tables view. The
+// layout is: an optional round-nav row, then a Back-to-event row.
+// Hoisted so the handlers below can reference it.
+function composeRoundViewKeyboard(
+  allRounds: readonly EventRoundSummary[],
+  displayedRoundNumber: number | null,
+  eventId: number,
+  kind: 'leaderboard' | 'rounds',
+): InlineKeyboardButton[][] {
+  const keyboard: InlineKeyboardButton[][] = [];
+  if (displayedRoundNumber != null) {
+    const nav = buildRoundNavRow(allRounds, displayedRoundNumber, eventId, kind);
+    if (nav.length > 0) keyboard.push(nav);
   }
-  const data = await deps.locatorRepository.getEventData(eventId);
-  if (!data) {
-    await ctx.answerCbQuery('Locator data not available.');
-    return;
+  keyboard.push([{ text: '\u2190 Back to event', callback_data: `event:${eventId}` }]);
+  return keyboard;
+}
+
+function buildRoundNavRow(
+  allRounds: readonly EventRoundSummary[],
+  currentRoundNumber: number,
+  eventId: number,
+  kind: 'leaderboard' | 'rounds',
+): InlineKeyboardButton[] {
+  const sorted = [...allRounds].sort((a, b) => a.roundNumber - b.roundNumber);
+  const idx = sorted.findIndex((r) => r.roundNumber === currentRoundNumber);
+  if (idx === -1) return [];
+  const row: InlineKeyboardButton[] = [];
+  if (idx > 0) {
+    const prev = sorted[idx - 1]!;
+    row.push({
+      text: `\u2190 Round ${prev.roundNumber}`,
+      callback_data: `event:${eventId}:${kind}:round:${prev.roundNumber}`,
+    });
   }
-  const body = formatEventScoreboard(data);
-  await ctx.editMessageText(body);
+  if (idx < sorted.length - 1) {
+    const next = sorted[idx + 1]!;
+    row.push({
+      text: `Round ${next.roundNumber} \u2192`,
+      callback_data: `event:${eventId}:${kind}:round:${next.roundNumber}`,
+    });
+  }
+  return row;
+}
+
+// ---------------------------------------------------------------------------
+// Leaderboard
+// ---------------------------------------------------------------------------
+
+async function handleLeaderboard(
+  ctx: Context,
+  deps: EventActionDeps,
+  eventId: number,
+  roundNumber?: number,
+): Promise<void> {
+  const data = await deps.eventRepository.getEventDetail(eventId, deps.defaultLocation);
+  if (!data) { await ctx.answerCbQuery('Event data not available.'); return; }
+  const allRounds = data.event.tournamentPhases.flatMap((p) => p.rounds);
+  let displayedRoundNumber: number | null = null;
+  let standings: readonly EventStanding[] = [];
+  if (roundNumber != null) {
+    const round = allRounds.find((r) => r.roundNumber === roundNumber);
+    if (!round) { await ctx.answerCbQuery('Round not found.'); return; }
+    displayedRoundNumber = round.roundNumber;
+    standings = await deps.eventRepository.getEventStandings(round.id);
+  } else {
+    // Default view: the latest round that actually has standings
+    // data. The current round often has none (standings are only
+    // generated once the round completes or results land), which
+    // previously rendered an empty leaderboard.
+    const sorted = [...allRounds].sort((a, b) => b.roundNumber - a.roundNumber);
+    const startIdx = data.currentRound != null
+      ? Math.max(0, sorted.findIndex((r) => r.id === data.currentRound!.id))
+      : 0;
+    let found = false;
+    for (let i = startIdx; i < sorted.length; i++) {
+      const round = sorted[i]!;
+      const rows = round.id === data.currentRound?.id
+        ? data.standings
+        : await deps.eventRepository.getEventStandings(round.id);
+      if (rows.length > 0) {
+        displayedRoundNumber = round.roundNumber;
+        standings = rows;
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      displayedRoundNumber = data.currentRound?.roundNumber ?? null;
+      standings = data.standings;
+    }
+  }
+  const body = formatEventLeaderboard({
+    name: data.event.name,
+    currentRound: displayedRoundNumber,
+    standings,
+  });
+  const keyboard = composeRoundViewKeyboard(
+    allRounds, displayedRoundNumber, eventId, 'leaderboard',
+  );
+  await ctx.editMessageText(body, {
+    parse_mode: 'HTML',
+    reply_markup: { inline_keyboard: keyboard },
+  });
 }
 
 // ---------------------------------------------------------------------------
 // Rounds
 // ---------------------------------------------------------------------------
 
-async function handleRounds(ctx: Context, deps: EventActionDeps, eventIdStr: string): Promise<void> {
-  const eventId = parseInt(eventIdStr, 10);
-  if (isNaN(eventId)) {
-    await ctx.answerCbQuery('Invalid event.');
-    return;
+async function handleRounds(
+  ctx: Context,
+  deps: EventActionDeps,
+  eventId: number,
+  roundNumber?: number,
+): Promise<void> {
+  const data = await deps.eventRepository.getEventDetail(eventId, deps.defaultLocation);
+  if (!data) { await ctx.answerCbQuery('Event data not available.'); return; }
+  const allRounds = data.event.tournamentPhases.flatMap((p) => p.rounds);
+  let displayedRound: EventRoundSummary | null;
+  let displayedRoundNumber: number | null;
+  let pairings: readonly EventPairing[];
+  if (roundNumber != null) {
+    const round = allRounds.find((r) => r.roundNumber === roundNumber);
+    if (!round) { await ctx.answerCbQuery('Round not found.'); return; }
+    displayedRound = round;
+    displayedRoundNumber = round.roundNumber;
+    pairings = await deps.eventRepository.getEventMatches(round.id);
+  } else {
+    displayedRound = data.currentRound;
+    displayedRoundNumber = data.currentRound?.roundNumber ?? null;
+    pairings = data.pairings;
   }
-  const data = await deps.locatorRepository.getEventData(eventId);
-  if (!data) {
-    await ctx.answerCbQuery('Locator data not available.');
-    return;
-  }
-  const body = formatEventRounds(data);
-  await ctx.editMessageText(body);
+  const body = formatEventRounds({
+    name: data.event.name,
+    currentRound: displayedRound,
+    pairings,
+  });
+  const keyboard = composeRoundViewKeyboard(
+    allRounds, displayedRoundNumber, eventId, 'rounds',
+  );
+  await ctx.editMessageText(body, {
+    parse_mode: 'HTML',
+    reply_markup: { inline_keyboard: keyboard },
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -159,19 +301,19 @@ async function handleWatchStart(
   deps: EventActionDeps,
   eventId: number,
 ): Promise<void> {
-  const data = await deps.locatorRepository.getEventData(eventId);
+  const data = await deps.eventRepository.getEventDetail(eventId, deps.defaultLocation);
   if (!data) {
-    await ctx.answerCbQuery('Locator unavailable for this event.', { show_alert: true });
+    await ctx.answerCbQuery('Event data not available.', { show_alert: true });
     return;
   }
 
-  await sendRosterPage(ctx, data.eventId, data.roster, 0);
+  await sendRosterPage(ctx, data.event.id, data.registrations, 0);
 }
 
 async function sendRosterPage(
   ctx: Context,
   eventId: number,
-  roster: readonly { displayName: string; status: string; profileImageUrl: string | null }[],
+  roster: readonly EventRegistration[],
   page: number,
 ): Promise<void> {
   const totalPages = Math.ceil(roster.length / NAMES_PER_PAGE);
@@ -186,7 +328,7 @@ async function sendRosterPage(
     const idx = start + i;
     buttons.push([
       {
-        text: `${entry.displayName} (${entry.status})`,
+        text: `${entry.name} (${entry.status})`,
         callback_data: `event:${eventId}:watch:${page}:${idx}`,
       },
     ]);
@@ -226,13 +368,13 @@ async function handleWatchSelect(
     return;
   }
 
-  const data = await deps.locatorRepository.getEventData(eventId);
+  const data = await deps.eventRepository.getEventDetail(eventId, deps.defaultLocation);
   if (!data) {
     await ctx.answerCbQuery('Roster changed, please try again.', { show_alert: true });
     return;
   }
 
-  const rosterEntry = data.roster[idx];
+  const rosterEntry = data.registrations[idx];
   if (!rosterEntry) {
     await ctx.answerCbQuery('Roster changed, please try again.', { show_alert: true });
     return;
@@ -242,8 +384,8 @@ async function handleWatchSelect(
   await deps.watchRepository.upsert({
     telegramId: userId,
     eventId,
-    eventName: data.name,
-    eventUsername: rosterEntry.displayName,
+    eventName: data.event.name,
+    eventUsername: rosterEntry.name,
     lastSeenRound: null,
     lastSeenTable: null,
     lastSeenOpponent: null,
@@ -253,8 +395,8 @@ async function handleWatchSelect(
   });
 
   await ctx.editMessageText(
-    `\uD83D\uDCE1 I'll DM you when your next pairing appears. Use /events unwatch to stop.`,
-    { reply_markup: { inline_keyboard: [] } },
+    `\uD83D\uDCE1 Watching <b>${escapeHtml(rosterEntry.name)}</b> \u2014 I'll DM you when their next pairing appears. Use /events unwatch to stop.`,
+    { parse_mode: 'HTML', reply_markup: { inline_keyboard: [] } },
   );
 }
 

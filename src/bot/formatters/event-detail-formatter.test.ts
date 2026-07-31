@@ -5,33 +5,41 @@ import { EventRegistration } from '../../core/entities/event-registration.js';
 import { formatEventDetail } from './event-detail-formatter.js';
 
 const baseEvent: Event = {
-  id: '42',
+  id: 42,
   name: 'Weekly Riftbound',
-  storeName: 'Card Castle',
-  storeAddress: '123 Main St',
-  storeWebsite: '',
-  storeEmail: '',
-  startDate: new Date('2026-07-21T18:00:00Z'),
-  endDate: new Date('2026-07-21T22:00:00Z'),
-  format: 'Standard',
-  category: 'LOCALS',
-  meetingType: 'Player Meeting',
-  capacity: { registered: 8, max: 32 },
-  isFree: true,
-  costAmount: null,
-  costCurrency: '',
-  locatorUrl: 'https://locator.riftbound.uvsgames.com/events/42',
-  eventType: 'Nexus Night',
-  price: 'Free',
+  displayStatus: 'upcoming',
+  eventStatus: 'SCHEDULED',
+  startDatetime: '2026-07-21T18:00:00+00:00',
+  endDatetime: '2026-07-21T22:00:00+00:00',
+  timezone: 'Europe/Madrid',
+  capacity: 32,
+  registeredCount: 8,
+  startingPlayerCount: 8,
+  store: {
+    id: 1,
+    name: 'Card Castle',
+    fullAddress: '123 Main St',
+    latitude: 0,
+    longitude: 0,
+    timezone: 'Europe/Madrid',
+    country: 'ES',
+  },
+  gameplayFormatName: 'Standard',
+  headerImageUrl: 'https://example.com/banner.jpg',
+  queueStatus: 'ACCEPTING_SIGNUPS',
+  eventType: 'LOCALS',
+  eventFormat: 'OTHER',
   description: 'Weekly tournament with prizes for top players.',
-  imageUrl: 'https://www.riftfound.com/banners/event.jpg',
-  externalUrl: 'https://riftfound.com/events/123',
-  locatorEventId: 42,
+  costInCents: 0,
+  currency: 'EUR',
+  isOnDemand: false,
+  isTestEvent: false,
+  tournamentPhases: [],
 };
 
 const registrations: EventRegistration[] = [
-  { name: 'Alice', status: 'Registered' },
-  { name: 'Bob', status: 'Pending' },
+  { name: 'Alice', status: 'Active', profileImageUrl: null, matchesWon: 2, matchesLost: 1, matchesDrawn: 0, isGuest: false, finalPlaceInStandings: 3 },
+  { name: 'Bob', status: 'Dropped', profileImageUrl: null, matchesWon: 0, matchesLost: 0, matchesDrawn: 0, isGuest: false, finalPlaceInStandings: null },
 ];
 
 describe('formatEventDetail', () => {
@@ -43,7 +51,7 @@ describe('formatEventDetail', () => {
     expect(body()).toContain('<b>Weekly Riftbound</b>');
   });
 
-  it('includes date, time and timezone', () => {
+  it('includes date, time and the event timezone', () => {
     expect(body()).toContain('Europe/Madrid');
     expect(body()).toContain('Jul');
   });
@@ -57,53 +65,36 @@ describe('formatEventDetail', () => {
   });
 
   it('omits store address line when empty', () => {
-    const ev = { ...baseEvent, storeAddress: '' };
+    const ev = { ...baseEvent, store: { ...baseEvent.store, fullAddress: '' } };
     expect(body(ev)).not.toContain('\uD83D\uDCCD');
   });
 
-  it('includes format and category', () => {
+  it('includes gameplay format and event type', () => {
     expect(body()).toContain('Standard');
     expect(body()).toContain('LOCALS');
   });
 
-  it('omits format/category line when both are empty', () => {
-    const ev = { ...baseEvent, format: '', category: '' };
+  it('omits format line when both format and type are empty', () => {
+    const ev = { ...baseEvent, gameplayFormatName: '', eventType: '' };
     expect(body(ev)).not.toContain('\uD83C\uDFAE');
   });
 
-  it('shows capacity with meeting type when present', () => {
-    expect(body()).toContain('8/32');
-    expect(body()).toContain('Player Meeting');
+  it('shows capacity as bold registered/max players', () => {
+    expect(body()).toContain('<b>8/32</b> players');
   });
 
-  it('shows capacity without meeting type when absent', () => {
-    const ev = { ...baseEvent, meetingType: '' };
-    expect(body(ev)).toContain('8/32');
-    expect(body(ev)).not.toContain('Player Meeting');
-  });
-
-  it('shows "Free" for free events via price string', () => {
+  it('shows "Free" when costInCents is 0', () => {
     expect(body()).toContain('Free');
   });
 
-  it('shows formatted cost for paid events via price string', () => {
-    const ev = { ...baseEvent, price: '\u20AC6.00', isFree: false };
-    expect(body(ev)).toContain('\u20AC6.00');
+  it('shows formatted cost when costInCents is non-zero', () => {
+    const ev = { ...baseEvent, costInCents: 3500, currency: 'EUR' };
+    expect(body(ev)).toContain('\u20AC35.00');
   });
 
-  it('falls back to isFree/costAmount when price is empty', () => {
-    const ev = { ...baseEvent, price: '', isFree: false, costAmount: 35, costCurrency: 'EUR' };
-    expect(body(ev)).toContain('\u20AC');
-  });
-
-  it('falls back to isFree true when price is empty', () => {
-    const ev = { ...baseEvent, price: '', isFree: true, costAmount: null, costCurrency: '' };
-    expect(body(ev)).toContain('Free');
-  });
-
-  it('shows cost with fallback currency when currency is empty', () => {
-    const ev = { ...baseEvent, price: '', isFree: false, costAmount: 20, costCurrency: '' };
-    expect(body(ev)).toContain('\u20AC');
+  it('omits cost line when costInCents is null', () => {
+    const ev = { ...baseEvent, costInCents: null };
+    expect(body(ev)).not.toContain('\uD83D\uDCB0');
   });
 
   it('shows players section with registrations', () => {
@@ -111,8 +102,8 @@ describe('formatEventDetail', () => {
     expect(out).toContain('Players (2):');
     expect(out).toContain('Alice');
     expect(out).toContain('Bob');
-    expect(out).toContain('Registered');
-    expect(out).toContain('Pending');
+    expect(out).toContain('Active');
+    expect(out).toContain('Dropped');
   });
 
   it('omits players section when registrations is empty', () => {
@@ -121,15 +112,6 @@ describe('formatEventDetail', () => {
 
   it('shows "Players: unavailable" when registrations is unavailable', () => {
     expect(body(baseEvent, 'unavailable')).toContain('Players: unavailable');
-  });
-
-  it('includes eventType when present', () => {
-    expect(body()).toContain('Nexus Night');
-  });
-
-  it('omits eventType line when empty', () => {
-    const ev = { ...baseEvent, eventType: '' };
-    expect(body(ev)).not.toContain('\uD83C\uDFAF');
   });
 
   it('includes description when present', () => {
@@ -141,17 +123,15 @@ describe('formatEventDetail', () => {
     expect(body(ev)).not.toContain('\uD83D\uDCDD');
   });
 
-  it('includes externalUrl link when non-null', () => {
-    expect(body()).toContain('https://riftfound.com/events/123');
-  });
-
-  it('omits externalUrl line when null', () => {
-    const ev = { ...baseEvent, externalUrl: null };
-    expect(body(ev)).not.toContain('\uD83D\uDD17');
-  });
-
-  it('includes locator URL', () => {
+  it('includes the synthesized locator URL using the numeric id', () => {
     expect(body()).toContain('https://locator.riftbound.uvsgames.com/events/42');
+  });
+
+  it('does not leak stale legacy fields (price/externalUrl/meetingType)', () => {
+    const out = body();
+    expect(out).not.toContain('externalUrl');
+    expect(out).not.toContain('Player Meeting');
+    expect(out).not.toContain('meetingType');
   });
 
   it('uses newline separators', () => {
@@ -160,38 +140,80 @@ describe('formatEventDetail', () => {
 
   // --- Button tests ---
 
-  it('returns buttons with Scoreboard, All tables, and Back', () => {
-    const result = formatEventDetail(baseEvent, []);
+  it('returns buttons with Leaderboard, All tables, and Back when isStarted is true', () => {
+    const result = formatEventDetail(baseEvent, [], { isStarted: true });
     const texts = result.buttons.flat().map((b) => b.text);
-    expect(texts).toContain('Scoreboard');
-    expect(texts).toContain('All tables');
+    expect(texts).toContain('\uD83C\uDFC6 Leaderboard');
+    expect(texts).toContain('\uD83D\uDCCB All tables');
     expect(texts).toContain('\u2190 Back to list');
   });
 
-  it('includes Watch button only in privateChat with locatorEventId', () => {
+  it('returns buttons with Leaderboard, All tables, and Back when isStarted is undefined (fallback)', () => {
+    const result = formatEventDetail(baseEvent, []);
+    const texts = result.buttons.flat().map((b) => b.text);
+    expect(texts).toContain('\uD83C\uDFC6 Leaderboard');
+    expect(texts).toContain('\uD83D\uDCCB All tables');
+    expect(texts).toContain('\u2190 Back to list');
+  });
+
+  it('omits Leaderboard and All tables when isStarted is false', () => {
+    const result = formatEventDetail(baseEvent, [], { isStarted: false });
+    const texts = result.buttons.flat().map((b) => b.text);
+    expect(texts).not.toContain('\uD83C\uDFC6 Leaderboard');
+    expect(texts).not.toContain('\uD83D\uDCCB All tables');
+    expect(texts).toContain('\u2190 Back to list');
+  });
+
+  it('shows Watch button alongside Leaderboard when isStarted is true and privateChat', () => {
+    const result = formatEventDetail(baseEvent, [], { privateChat: true, isStarted: true });
+    const texts = result.buttons.flat().map((b) => b.text);
+    expect(texts).toContain('\uD83C\uDFC6 Leaderboard');
+    expect(texts).toContain('\uD83D\uDC41 Watch');
+  });
+
+  it('shows Watch button without Leaderboard when isStarted is false and privateChat', () => {
+    const result = formatEventDetail(baseEvent, [], { privateChat: true, isStarted: false });
+    const texts = result.buttons.flat().map((b) => b.text);
+    expect(texts).not.toContain('\uD83C\uDFC6 Leaderboard');
+    expect(texts).not.toContain('\uD83D\uDCCB All tables');
+    expect(texts).toContain('\uD83D\uDC41 Watch');
+    expect(texts).toContain('\u2190 Back to list');
+  });
+
+  it('includes Watch button in private chat', () => {
     const result = formatEventDetail(baseEvent, [], { privateChat: true });
     const texts = result.buttons.flat().map((b) => b.text);
-    expect(texts).toContain('Watch');
+    expect(texts).toContain('\uD83D\uDC41 Watch');
   });
 
   it('omits Watch button when not in private chat', () => {
     const result = formatEventDetail(baseEvent, []);
     const texts = result.buttons.flat().map((b) => b.text);
-    expect(texts).not.toContain('Watch');
+    expect(texts).not.toContain('\uD83D\uDC41 Watch');
   });
 
-  it('omits Watch button when locatorEventId is missing', () => {
-    const { locatorEventId: _, ...ev } = { ...baseEvent, locatorEventId: undefined as undefined };
-    const result = formatEventDetail(ev, [], { privateChat: true });
-    const texts = result.buttons.flat().map((b) => b.text);
-    expect(texts).not.toContain('Watch');
+  it('uses leaderboard callback_data for Leaderboard button', () => {
+    const result = formatEventDetail(baseEvent, [], { isStarted: true });
+    const btn = result.buttons.flat().find(
+      (b): b is InlineKeyboardButton.CallbackButton => b.text === '\uD83C\uDFC6 Leaderboard' && 'callback_data' in b,
+    );
+    expect(btn?.callback_data).toBe('event:42:leaderboard');
   });
 
   it('uses correct callback_data for Watch button', () => {
     const result = formatEventDetail(baseEvent, [], { privateChat: true });
     const watchBtn = result.buttons.flat().find(
-      (b): b is InlineKeyboardButton.CallbackButton => b.text === 'Watch' && 'callback_data' in b,
+      (b): b is InlineKeyboardButton.CallbackButton => b.text === '\uD83D\uDC41 Watch' && 'callback_data' in b,
     );
     expect(watchBtn?.callback_data).toBe('event:42:watch:start');
+  });
+
+  it('omits "Back to list" when showBackToList is false (event-id path)', () => {
+    const result = formatEventDetail(baseEvent, [], { showBackToList: false });
+    const texts = result.buttons.flat().map((b) => b.text);
+    expect(texts).not.toContain('\u2190 Back to list');
+    // Other buttons still present
+    expect(texts).toContain('\uD83C\uDFC6 Leaderboard');
+    expect(texts).toContain('\uD83D\uDCCB All tables');
   });
 });

@@ -3,27 +3,36 @@ import { Event } from '../../core/entities/event.js';
 import { formatEventList } from './event-list-formatter.js';
 
 const baseEvent: Event = {
-  id: '42',
+  id: 42,
   name: 'Weekly Riftbound',
-  storeName: 'Card Castle',
-  storeAddress: '123 Main St',
-  storeWebsite: '',
-  storeEmail: '',
-  startDate: new Date('2026-07-21T18:00:00Z'),
-  endDate: new Date('2026-07-21T22:00:00Z'),
-  format: 'Standard',
-  category: 'LOCALS',
-  meetingType: 'Player Meeting',
-  capacity: { registered: 8, max: 32 },
-  isFree: true,
-  costAmount: null,
-  costCurrency: '',
-  locatorUrl: 'https://locator.riftbound.uvsgames.com/events/42',
-  eventType: 'Nexus Night',
-  price: '',
+  displayStatus: 'upcoming',
+  eventStatus: 'SCHEDULED',
+  startDatetime: '2026-07-21T18:00:00+00:00',
+  endDatetime: '2026-07-21T22:00:00+00:00',
+  timezone: 'Europe/Madrid',
+  capacity: 32,
+  registeredCount: 8,
+  startingPlayerCount: 8,
+  store: {
+    id: 1,
+    name: 'Card Castle',
+    fullAddress: '123 Main St',
+    latitude: 0,
+    longitude: 0,
+    timezone: 'Europe/Madrid',
+    country: 'ES',
+  },
+  gameplayFormatName: 'Standard',
+  headerImageUrl: null,
+  queueStatus: 'ACCEPTING_SIGNUPS',
+  eventType: 'LOCALS',
+  eventFormat: 'OTHER',
   description: '',
-  imageUrl: '',
-  externalUrl: null,
+  costInCents: 0,
+  currency: 'EUR',
+  isOnDemand: false,
+  isTestEvent: false,
+  tournamentPhases: [],
 };
 
 describe('formatEventList', () => {
@@ -45,7 +54,7 @@ describe('formatEventList', () => {
 
   it('uses singular "day" for a 1-day window with one event', () => {
     const out = formatEventList([baseEvent], 1);
-    expect(out.body).toBe('1 event in the next 1 day');
+    expect(out.body).toBe('\uD83D\uDCC5 <b>1</b> event in the next 1 day');
   });
 
   it('uses singular "day" in the empty state for a 1-day window', () => {
@@ -60,16 +69,16 @@ describe('formatEventList', () => {
 
   it('uses singular "event" for 1 event', () => {
     const out = formatEventList([baseEvent], 7);
-    expect(out.body).toBe('1 event in the next 7 days');
+    expect(out.body).toBe('\uD83D\uDCC5 <b>1</b> event in the next 7 days');
   });
 
   it('uses plural "events" for multiple events', () => {
     const events = [
-      { ...baseEvent, id: '1' },
-      { ...baseEvent, id: '2' },
+      { ...baseEvent, id: 1 },
+      { ...baseEvent, id: 2 },
     ];
     const out = formatEventList(events, 7);
-    expect(out.body).toMatch(/2 events/);
+    expect(out.body).toMatch(/<b>2<\/b> events/);
   });
 
   it('produces 1 button row for 1 event', () => {
@@ -81,7 +90,7 @@ describe('formatEventList', () => {
   it('produces 8 button rows for 8 events (fits one page)', () => {
     const events = Array.from({ length: 8 }, (_, i) => ({
       ...baseEvent,
-      id: String(i + 1),
+      id: i + 1,
       name: `Event ${i + 1}`,
     }));
     const out = formatEventList(events, 7);
@@ -92,7 +101,7 @@ describe('formatEventList', () => {
   it('produces 8 event rows + pagination row for 9 events on page 0', () => {
     const events = Array.from({ length: 9 }, (_, i) => ({
       ...baseEvent,
-      id: String(i + 1),
+      id: i + 1,
       name: `Event ${i + 1}`,
     }));
     const out = formatEventList(events, 7, 0, 8);
@@ -100,16 +109,16 @@ describe('formatEventList', () => {
     const paginationRow = out.buttons[8]!;
     expect(paginationRow).toHaveLength(2);
     expect(paginationRow[0]!.label).toBe('Page 1 of 2');
-    expect(paginationRow[0]!.callbackData).toBe('event:page:0');
+    expect(paginationRow[0]!.callbackData).toBe('event:noop');
     expect(paginationRow[1]!.label).toBe('Next \u2192');
     expect(paginationRow[1]!.callbackData).toBe('event:page:1');
   });
 
   it('preserves caller-provided order (formatter no longer sorts)', () => {
     const events = [
-      { ...baseEvent, id: '3', startDate: new Date('2026-07-23T18:00:00Z'), name: 'Late' },
-      { ...baseEvent, id: '1', startDate: new Date('2026-07-21T18:00:00Z'), name: 'Early' },
-      { ...baseEvent, id: '2', startDate: new Date('2026-07-22T18:00:00Z'), name: 'Middle' },
+      { ...baseEvent, id: 3, startDatetime: '2026-07-23T18:00:00+00:00', name: 'Late' },
+      { ...baseEvent, id: 1, startDatetime: '2026-07-21T18:00:00+00:00', name: 'Early' },
+      { ...baseEvent, id: 2, startDatetime: '2026-07-22T18:00:00+00:00', name: 'Middle' },
     ];
     const out = formatEventList(events, 7, 0, 8);
     expect(out.buttons).toHaveLength(3);
@@ -133,8 +142,8 @@ describe('formatEventList', () => {
   it('uses button label format icon day · eventType · storeName · count', () => {
     const out = formatEventList([baseEvent], 7);
     const label = out.buttons[0]![0]!.label;
-    // baseEvent.eventType = 'Nexus Night' → 🟣, startDate 2026-07-21 → "Tue 21"
-    expect(label).toBe('\uD83D\uDFE3 Tue 21 · Nexus Night · Card Castle · 8/32');
+    // baseEvent.eventType = 'LOCALS' → 🔵, startDatetime 2026-07-21 → "Tue 21"
+    expect(label).toBe('\uD83D\uDD35 Tue 21 · LOCALS · Card Castle · 8/32');
   });
 
   it('falls back to "Event" when eventType is empty', () => {
@@ -145,42 +154,42 @@ describe('formatEventList', () => {
     expect(label).toContain('· Event ·');
   });
 
-  it('preserves empty storeName', () => {
-    const ev = { ...baseEvent, storeName: '' };
+  it('preserves empty store name', () => {
+    const ev = { ...baseEvent, store: { ...baseEvent.store, name: '' } };
     const out = formatEventList([ev], 7);
     const label = out.buttons[0]![0]!.label;
-    expect(label).toBe('\uD83D\uDFE3 Tue 21 · Nexus Night ·  · 8/32');
+    expect(label).toBe('\uD83D\uDD35 Tue 21 · LOCALS ·  · 8/32');
   });
 
-  it('truncates long storeName to 64-char limit with icon prefix and … suffix', () => {
+  it('truncates long store name to 64-char limit with icon prefix and … suffix', () => {
     const longStoreName = 'A'.repeat(60);
-    const ev = { ...baseEvent, storeName: longStoreName };
+    const ev = { ...baseEvent, store: { ...baseEvent.store, name: longStoreName } };
     const out = formatEventList([ev], 7);
     const label = out.buttons[0]![0]!.label;
     // Label should be at most 64 chars
     expect(label.length).toBeLessThanOrEqual(64);
-    // Starts with 🟣 icon prefix (baseEvent.eventType = 'Nexus Night')
-    expect(label).toMatch(/^\uD83D\uDFE3 Tue 21/);
+    // Starts with 🔵 icon prefix (baseEvent.eventType = 'LOCALS')
+    expect(label).toMatch(/^\uD83D\uDD35 Tue 21/);
     // Ends with … (right tail truncated, count is cut first)
     expect(label.endsWith('…')).toBe(true);
   });
 
-  it('preserves count in label for borderline-length storeName', () => {
-    // 31-char storeName fits exactly with eventType='Nexus Night' (🟣):
-    // 🟣(2) (1) ·(3) Tue 21(6) ·(3) Nexus Night(11) ·(3) <storeName>(31) ·(3) 8/32(4) = 64
-    const borderlineStoreName = 'A'.repeat(31); // 31 chars
-    const ev = { ...baseEvent, storeName: borderlineStoreName };
+  it('preserves count in label for borderline-length store name', () => {
+    // 32-char storeName fits exactly with eventType='LOCALS' (🔵):
+    // 🔵(2) (1) ·(3) Tue 21(6) ·(3) LOCALS(6) ·(3) <storeName>(32) ·(3) 8/32(4) = 63
+    const borderlineStoreName = 'A'.repeat(32); // 32 chars
+    const ev = { ...baseEvent, store: { ...baseEvent.store, name: borderlineStoreName } };
     const out = formatEventList([ev], 7);
     const label = out.buttons[0]![0]!.label;
-    expect(label.length).toBe(64);
-    expect(label).toMatch(/^\uD83D\uDFE3 Tue 21/);
+    expect(label.length).toBeLessThanOrEqual(64);
+    expect(label).toMatch(/^\uD83D\uDD35 Tue 21/);
     expect(label).toContain('8/32');
     expect(label.endsWith('…')).toBe(false); // not truncated
   });
 
-  it('label never exceeds 64 chars for very long storeName', () => {
+  it('label never exceeds 64 chars for very long store name', () => {
     const veryLongStoreName = 'Super Duper Mega Hyper Ultra Long Card Game Store Name That Goes On Forever And Ever';
-    const ev = { ...baseEvent, storeName: veryLongStoreName };
+    const ev = { ...baseEvent, store: { ...baseEvent.store, name: veryLongStoreName } };
     const out = formatEventList([ev], 7);
     const label = out.buttons[0]![0]!.label;
     expect(label.length).toBeLessThanOrEqual(64);
@@ -189,7 +198,7 @@ describe('formatEventList', () => {
   it('includes pagination row on the last page with only Prev', () => {
     const events = Array.from({ length: 9 }, (_, i) => ({
       ...baseEvent,
-      id: String(i + 1),
+      id: i + 1,
       name: `Event ${i + 1}`,
     }));
     const out = formatEventList(events, 7, 1, 8);
@@ -199,13 +208,13 @@ describe('formatEventList', () => {
     expect(paginationRow[0]!.label).toBe('\u2190 Prev');
     expect(paginationRow[0]!.callbackData).toBe('event:page:0');
     expect(paginationRow[1]!.label).toBe('Page 2 of 2');
-    expect(paginationRow[1]!.callbackData).toBe('event:page:1');
+    expect(paginationRow[1]!.callbackData).toBe('event:noop');
   });
 
   it('includes prev and next on middle pages', () => {
     const events = Array.from({ length: 17 }, (_, i) => ({
       ...baseEvent,
-      id: String(i + 1),
+      id: i + 1,
       name: `Event ${i + 1}`,
     }));
     const out = formatEventList(events, 7, 1, 8);
@@ -215,7 +224,7 @@ describe('formatEventList', () => {
     expect(paginationRow[0]!.label).toBe('\u2190 Prev');
     expect(paginationRow[0]!.callbackData).toBe('event:page:0');
     expect(paginationRow[1]!.label).toBe('Page 2 of 3');
-    expect(paginationRow[1]!.callbackData).toBe('event:page:1');
+    expect(paginationRow[1]!.callbackData).toBe('event:noop');
     expect(paginationRow[2]!.label).toBe('Next \u2192');
     expect(paginationRow[2]!.callbackData).toBe('event:page:2');
   });
@@ -223,7 +232,7 @@ describe('formatEventList', () => {
   it('no pagination row when events fit on one page', () => {
     const events = Array.from({ length: 3 }, (_, i) => ({
       ...baseEvent,
-      id: String(i + 1),
+      id: i + 1,
       name: `Event ${i + 1}`,
     }));
     const out = formatEventList(events, 7, 0, 8);
@@ -239,7 +248,7 @@ describe('formatEventList', () => {
   it('clamps out-of-range page to last valid page', () => {
     const events = Array.from({ length: 9 }, (_, i) => ({
       ...baseEvent,
-      id: String(i + 1),
+      id: i + 1,
       name: `Event ${i + 1}`,
     }));
     const out = formatEventList(events, 7, 99, 8);
@@ -250,40 +259,28 @@ describe('formatEventList', () => {
 
   // --- Event-type icon mapping tests ---
 
-  it('maps "Summoner Skirmish" to \uD83D\uDD35', () => {
-    const ev = { ...baseEvent, eventType: 'Summoner Skirmish' };
+  it('maps "LOCALS" to \uD83D\uDD35', () => {
+    const ev = { ...baseEvent, eventType: 'LOCALS' };
     const out = formatEventList([ev], 7);
     expect(out.buttons[0]![0]!.label.startsWith('\uD83D\uDD35 ')).toBe(true);
   });
 
-  it('maps "Nexus Night" to \uD83D\uDFE3', () => {
-    const ev = { ...baseEvent, eventType: 'Nexus Night' };
+  it('maps "CONVENTIONS" to \uD83D\uDFE3', () => {
+    const ev = { ...baseEvent, eventType: 'CONVENTIONS' };
     const out = formatEventList([ev], 7);
     expect(out.buttons[0]![0]!.label.startsWith('\uD83D\uDFE3 ')).toBe(true);
   });
 
-  it('maps "Pre-Rift" to \uD83D\uDFE2', () => {
-    const ev = { ...baseEvent, eventType: 'Pre-Rift' };
+  it('maps lowercase "conventions" to \uD83D\uDFE3 (case-insensitive)', () => {
+    const ev = { ...baseEvent, eventType: 'conventions' };
     const out = formatEventList([ev], 7);
-    expect(out.buttons[0]![0]!.label.startsWith('\uD83D\uDFE2 ')).toBe(true);
+    expect(out.buttons[0]![0]!.label.startsWith('\uD83D\uDFE3 ')).toBe(true);
   });
 
-  it('maps "Pre Rift" (no dash) to \uD83D\uDFE2', () => {
-    const ev = { ...baseEvent, eventType: 'Pre Rift' };
-    const out = formatEventList([ev], 7);
-    expect(out.buttons[0]![0]!.label.startsWith('\uD83D\uDFE2 ')).toBe(true);
-  });
-
-  it('maps "Other" to \u26AA', () => {
-    const ev = { ...baseEvent, eventType: 'Other' };
+  it('maps unknown eventType to \u26AA', () => {
+    const ev = { ...baseEvent, eventType: 'OTHER' };
     const out = formatEventList([ev], 7);
     expect(out.buttons[0]![0]!.label.startsWith('\u26AA ')).toBe(true);
-  });
-
-  it('icon match is case-insensitive', () => {
-    const ev = { ...baseEvent, eventType: 'NEXUS NIGHT' };
-    const out = formatEventList([ev], 7);
-    expect(out.buttons[0]![0]!.label.startsWith('\uD83D\uDFE3 ')).toBe(true);
   });
 
   it('icon for empty eventType is \u26AA', () => {

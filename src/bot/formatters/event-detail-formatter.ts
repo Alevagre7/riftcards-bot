@@ -3,133 +3,153 @@ import { Event } from '../../core/entities/event.js';
 import { EventRegistration } from '../../core/entities/event-registration.js';
 import { escapeHtml } from './card-formatter.js';
 
-const tz = 'Europe/Madrid';
-
-const dateFmt = new Intl.DateTimeFormat('en-GB', {
-  weekday: 'short',
-  month: 'short',
-  day: 'numeric',
-  timeZone: tz,
-});
-
-const timeFmt = new Intl.DateTimeFormat('en-GB', {
-  hour: '2-digit',
-  minute: '2-digit',
-  timeZone: tz,
-});
-
 // ---------------------------------------------------------------------------
 // formatEventDetail
 // ---------------------------------------------------------------------------
 
 // Renders a single event's full detail as an HTML string with inline
-// keyboard buttons for Scoreboard, All tables, and optionally Watch
-// (only in private chats when locatorEventId is present).
+// keyboard buttons for Leaderboard, All tables, and Watch (the latter
+// only in private chats).
 //
 // registrations: pass the upstream registration list, or the literal
 // string 'unavailable' when the endpoint failed.
+//
+// All date rendering uses the event's own IANA timezone.
 
 export interface EventDetailResult {
   body: string;
   buttons: InlineKeyboardButton[][];
 }
 
+// Status chip shown next to the event name. Colorful at a glance for
+// anyone scanning the chat: green = upcoming, yellow = in progress,
+// red = complete. Empty string (no chip) for anything unexpected.
+function statusChip(displayStatus: Event['displayStatus']): string {
+  switch (displayStatus) {
+    case 'upcoming':
+      return '\uD83D\uDFE2'; // 🟢
+    case 'inProgress':
+      return '\uD83D\uDFE1'; // 🟡
+    case 'complete':
+      return '\uD83D\uDD34'; // 🔴
+    default:
+      return '';
+  }
+}
+
 export function formatEventDetail(
   event: Event,
   registrations: readonly EventRegistration[] | 'unavailable',
-  options?: { privateChat?: boolean },
+  options?: { privateChat?: boolean; isStarted?: boolean; showBackToList?: boolean },
 ): EventDetailResult {
+  const tz = event.timezone || 'Europe/Madrid';
+  const dateFmt = new Intl.DateTimeFormat('en-GB', {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    timeZone: tz,
+  });
+  const timeFmt = new Intl.DateTimeFormat('en-GB', {
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: tz,
+  });
+
   const lines: string[] = [];
 
-  // Header
-  lines.push(`\uD83D\uDCC5 <b>${escapeHtml(event.name)}</b>`);
+  // Header: name + colored status chip
+  const chip = statusChip(event.displayStatus);
+  lines.push(`\uD83D\uDCC5 <b>${escapeHtml(event.name)}</b>${chip ? ` ${chip}` : ''}`);
 
-  // Date/time
-  const dateStr = dateFmt.format(event.startDate);
-  const startTime = timeFmt.format(event.startDate);
-  const endTime = timeFmt.format(event.endDate);
-  lines.push(`\uD83D\uDD50 ${dateStr} \u00B7 ${startTime}\u2013${endTime} (Europe/Madrid)`);
+  // Date/time (event's own timezone)
+  const start = new Date(event.startDatetime);
+  const end = new Date(event.endDatetime);
+  const dateStr = dateFmt.format(start);
+  const startTime = timeFmt.format(start);
+  const endTime = timeFmt.format(end);
+  lines.push(
+    `\uD83D\uDD50 <b>${dateStr} \u00B7 ${startTime}\u2013${endTime}</b> (${event.timezone})`,
+  );
 
   // Store
-  lines.push(`\uD83C\uDFEA ${escapeHtml(event.storeName)}`);
-
-  // Event type (riftfound)
-  if (event.eventType) {
-    lines.push(`\uD83C\uDFAF ${escapeHtml(event.eventType)}`);
-  }
+  lines.push(`\uD83C\uDFEA <b>${escapeHtml(event.store.name)}</b>`);
 
   // Address
-  if (event.storeAddress) {
-    lines.push(`\uD83D\uDCCD ${escapeHtml(event.storeAddress)}`);
+  if (event.store.fullAddress) {
+    lines.push(`\uD83D\uDCCD ${escapeHtml(event.store.fullAddress)}`);
   }
 
-  // Format / category
-  if (event.format || event.category) {
-    const fc = event.format
-      ? `\uD83C\uDFAE ${event.format}${event.category ? ` \u00B7 ${event.category}` : ''}`
-      : `\uD83C\uDFAE ${event.category}`;
+  // Format / event type
+  if (event.gameplayFormatName || event.eventType) {
+    const fc = event.gameplayFormatName
+      ? `\uD83C\uDFAE <b>${escapeHtml(event.gameplayFormatName)}</b>${event.eventType ? ` \u00B7 ${escapeHtml(event.eventType)}` : ''}`
+      : `\uD83C\uDFAE ${escapeHtml(event.eventType)}`;
     lines.push(fc);
   }
 
-  // Capacity / meeting type
-  const capStr = `\uD83D\uDC65 ${event.capacity.registered}/${event.capacity.max} jugadores`;
-  if (event.meetingType) {
-    lines.push(`${capStr} \u00B7 ${event.meetingType}`);
-  } else {
-    lines.push(capStr);
-  }
+  // Capacity
+  lines.push(
+    `\uD83D\uDC65 <b>${event.registeredCount}/${event.capacity}</b> players`,
+  );
 
-  // Description (riftfound)
+  // Description
   if (event.description) {
-    lines.push(`\uD83D\uDCDD ${escapeHtml(event.description)}`);
+    lines.push(`\uD83D\uDCDD <i>${escapeHtml(event.description)}</i>`);
   }
 
-  // Cost — prefer riftfound price string, fall back to legacy fields
-  if (event.price) {
-    lines.push(`\uD83D\uDCB0 ${escapeHtml(event.price)}`);
-  } else if (event.isFree) {
-    lines.push('\uD83D\uDCB0 Free');
-  } else if (event.costAmount != null) {
-    const currency = event.costCurrency || 'EUR';
+  // Cost
+  if (event.costInCents === 0) {
+    lines.push('\uD83D\uDCB0 <b>Free</b>');
+  } else if (event.costInCents != null) {
+    const currency = event.currency || 'EUR';
     const amountFmt = new Intl.NumberFormat('en-GB', {
       style: 'currency',
       currency,
       currencyDisplay: 'symbol',
     });
-    lines.push(`\uD83D\uDCB0 ${amountFmt.format(event.costAmount)}`);
+    lines.push(`\uD83D\uDCB0 <b>${amountFmt.format(event.costInCents / 100)}</b>`);
   }
 
   // Players
   if (registrations === 'unavailable') {
-    lines.push('\uD83D\uDC65 Players: unavailable');
+    lines.push('\uD83D\uDC64 Players: unavailable');
   } else if (registrations.length > 0) {
-    lines.push(`Players (${registrations.length}):`);
+    lines.push(`\uD83D\uDC64 Players (${registrations.length}):`);
     for (const r of registrations) {
-      lines.push(`  \u2022 ${escapeHtml(r.name)} \u2014 ${r.status}`);
+      lines.push(
+        `  \u2022 <b>${escapeHtml(r.name)}</b> \u2014 ${escapeHtml(r.status)}`,
+      );
     }
   }
 
-  // External URL (riftfound)
-  if (event.externalUrl) {
-    lines.push(`\uD83D\uDD17 <a href="${escapeHtml(event.externalUrl)}">${escapeHtml(event.externalUrl)}</a>`);
+  // Locator page (synthesized — the V2 API has no locator URL field)
+  const locatorUrl = `https://locator.riftbound.uvsgames.com/events/${event.id}`;
+  lines.push(`\uD83D\uDD17 <a href="${locatorUrl}">${locatorUrl}</a>`);
+
+  // Build buttons using the numeric event id for callback data
+  const buttons: InlineKeyboardButton[][] = [];
+
+  // Show Leaderboard + All tables only when the event has started
+  // (isStarted=true or undefined — fallback when the detail endpoint
+  // is unreachable)
+  if (options?.isStarted !== false) {
+    buttons.push(
+      [{ text: '\uD83C\uDFC6 Leaderboard', callback_data: `event:${event.id}:leaderboard` }],
+      [{ text: '\uD83D\uDCCB All tables', callback_data: `event:${event.id}:rounds` }],
+    );
   }
 
-  // Locator URL
-  lines.push(`Locator: ${event.locatorUrl}`);
-
-  // Build buttons using locatorEventId (numeric) for callback data
-  const locatorId = event.locatorEventId ?? event.id;
-  const buttons: InlineKeyboardButton[][] = [
-    [{ text: 'Scoreboard', callback_data: `event:${locatorId}:scoreboard` }],
-    [{ text: 'All tables', callback_data: `event:${locatorId}:rounds` }],
-  ];
-
-  // Watch button only in private chats when locatorEventId is available
-  if (options?.privateChat === true && event.locatorEventId != null) {
-    buttons.push([{ text: 'Watch', callback_data: `event:${event.locatorEventId}:watch:start` }]);
+  // Watch button only in private chats
+  if (options?.privateChat === true) {
+    buttons.push([{ text: '\uD83D\uDC41 Watch', callback_data: `event:${event.id}:watch:start` }]);
   }
 
-  buttons.push([{ text: '\u2190 Back to list', callback_data: 'event:list' }]);
+  // "Back to list" makes no sense when the user opened the detail
+  // from /events <id> or a locator URL — there is no list to go back
+  // to. The event-id command path passes showBackToList: false.
+  if (options?.showBackToList !== false) {
+    buttons.push([{ text: '\u2190 Back to list', callback_data: 'event:list' }]);
+  }
 
   return {
     body: lines.join('\n'),

@@ -51,6 +51,9 @@ function mockEventRepo(): IEventRepository {
     getEvents: vi.fn().mockResolvedValue([]),
     getEventById: vi.fn().mockResolvedValue(null),
     getEventRegistrations: vi.fn().mockResolvedValue([]),
+    getEventMatches: vi.fn().mockResolvedValue([]),
+    getEventStandings: vi.fn().mockResolvedValue([]),
+    getEventDetail: vi.fn().mockResolvedValue(null),
   };
 }
 
@@ -187,6 +190,61 @@ describe('createEventsCommand — /events set inline coords', () => {
   });
 });
 
+describe('createEventsCommand — /events <id> and <url> debug path', () => {
+  let userSettings: ReturnType<typeof mockUserSettingsRepo>;
+  let eventRepo: IEventRepository;
+  beforeEach(() => {
+    userSettings = mockUserSettingsRepo();
+    eventRepo = mockEventRepo();
+    setupFlow.cancel(TEST_USER_ID);
+  });
+
+  function makeCmd() {
+    return createEventsCommand({
+      eventRepository: eventRepo,
+      userSettingsRepository: userSettings,
+      defaultLocation: { latitude: 0, longitude: 0, numMiles: 50 },
+      daysAhead: 7,
+    });
+  }
+
+  it('/events <id> (>= 1000) renders detail for that event id', async () => {
+    (eventRepo.getEventById as Mock).mockResolvedValueOnce(baseEvent({ id: 498515 }));
+    (eventRepo.getEventRegistrations as Mock).mockResolvedValueOnce([]);
+    (eventRepo.getEventDetail as Mock).mockResolvedValueOnce(null);
+
+    const ctx = makeCtx('/events 498515');
+    await makeCmd()(ctx);
+
+    expect(eventRepo.getEventById).toHaveBeenCalledWith(498515, expect.anything());
+    // The detail page is sent as a reply (not edit) because the
+    // command path is not a callback query.
+    const replyCall = (ctx.reply as Mock).mock.calls.find((c) => typeof c[0] === 'string');
+    expect(replyCall).toBeDefined();
+    expect(String(replyCall![0])).toContain('<b>Test Event</b>');
+  });
+
+  it('/events <locator-url> extracts the id and renders detail', async () => {
+    (eventRepo.getEventById as Mock).mockResolvedValueOnce(baseEvent({ id: 498515 }));
+    (eventRepo.getEventRegistrations as Mock).mockResolvedValueOnce([]);
+    (eventRepo.getEventDetail as Mock).mockResolvedValueOnce(null);
+
+    const ctx = makeCtx('/events https://locator.riftbound.uvsgames.com/events/498515');
+    await makeCmd()(ctx);
+
+    expect(eventRepo.getEventById).toHaveBeenCalledWith(498515, expect.anything());
+  });
+
+  it('/events <small number> still means days (no event lookup)', async () => {
+    (eventRepo.getEvents as Mock).mockResolvedValueOnce([]);
+    const ctx = makeCtx('/events 5');
+    await makeCmd()(ctx);
+
+    expect(eventRepo.getEvents).toHaveBeenCalledTimes(1);
+    expect(eventRepo.getEventById).not.toHaveBeenCalled();
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Helpers for the /events show-path tests
 // ---------------------------------------------------------------------------
@@ -199,27 +257,36 @@ function makeShowCtx(text?: string): Context {
 
 function baseEvent(over: Partial<Event> = {}): Event {
   return {
-    id: '1',
+    id: 1,
     name: 'Test Event',
-    storeName: 'Test Store',
-    storeAddress: '',
-    storeWebsite: '',
-    storeEmail: '',
-    startDate: new Date('2026-08-01T18:00:00Z'),
-    endDate: new Date('2026-08-01T22:00:00Z'),
-    format: '',
-    category: '',
-    meetingType: '',
-    capacity: { registered: 0, max: 8 },
-    isFree: true,
-    costAmount: null,
-    costCurrency: '',
-    locatorUrl: 'https://locator.example/events/1',
+    displayStatus: 'upcoming',
+    eventStatus: 'SCHEDULED',
+    startDatetime: '2026-08-01T18:00:00+00:00',
+    endDatetime: '2026-08-01T22:00:00+00:00',
+    timezone: 'Europe/Madrid',
+    capacity: 8,
+    registeredCount: 0,
+    startingPlayerCount: 0,
+    store: {
+      id: 1,
+      name: 'Test Store',
+      fullAddress: '',
+      latitude: 0,
+      longitude: 0,
+      timezone: 'Europe/Madrid',
+      country: 'ES',
+    },
+    gameplayFormatName: '',
+    headerImageUrl: null,
+    queueStatus: 'ACCEPTING_SIGNUPS',
     eventType: '',
-    price: '',
+    eventFormat: '',
     description: '',
-    imageUrl: '',
-    externalUrl: null,
+    costInCents: 0,
+    currency: 'EUR',
+    isOnDemand: false,
+    isTestEvent: false,
+    tournamentPhases: [],
     ...over,
   };
 }
@@ -291,10 +358,10 @@ describe('createEventsCommand — /events window menu', () => {
   it('includes an in-progress event (started 2h ago, ends in 2h)', async () => {
     const fixedNow = new Date('2026-08-01T12:00:00Z');
     const inProgress = baseEvent({
-      id: '1',
+      id: 1,
       name: 'In-Progress Tournament',
-      startDate: new Date(fixedNow.getTime() - 2 * 60 * 60 * 1000),
-      endDate: new Date(fixedNow.getTime() + 2 * 60 * 60 * 1000),
+      startDatetime: new Date(fixedNow.getTime() - 2 * 60 * 60 * 1000).toISOString(),
+      endDatetime: new Date(fixedNow.getTime() + 2 * 60 * 60 * 1000).toISOString(),
     });
     (eventRepo.getEvents as Mock).mockResolvedValueOnce([inProgress]);
     const ctx = makeShowCtx('/events 1');
@@ -314,10 +381,10 @@ describe('createEventsCommand — /events window menu', () => {
   it('excludes a finished event (ended 1h ago)', async () => {
     const fixedNow = new Date('2026-08-01T12:00:00Z');
     const finished = baseEvent({
-      id: '1',
+      id: 1,
       name: 'Already Over',
-      startDate: new Date(fixedNow.getTime() - 3 * 60 * 60 * 1000),
-      endDate: new Date(fixedNow.getTime() - 1 * 60 * 60 * 1000),
+      startDatetime: new Date(fixedNow.getTime() - 3 * 60 * 60 * 1000).toISOString(),
+      endDatetime: new Date(fixedNow.getTime() - 1 * 60 * 60 * 1000).toISOString(),
     });
     (eventRepo.getEvents as Mock).mockResolvedValueOnce([finished]);
 
@@ -337,10 +404,12 @@ describe('createEventsCommand — /events window menu', () => {
   it('includes an upcoming event well within the window', async () => {
     const fixedNow = new Date('2026-08-01T12:00:00Z');
     const upcoming = baseEvent({
-      id: '1',
+      id: 1,
       name: 'Weekend Skirmish',
-      startDate: new Date(fixedNow.getTime() + 3 * 24 * 60 * 60 * 1000),
-      endDate: new Date(fixedNow.getTime() + 3 * 24 * 60 * 60 * 1000 + 4 * 60 * 60 * 1000),
+      startDatetime: new Date(fixedNow.getTime() + 3 * 24 * 60 * 60 * 1000).toISOString(),
+      endDatetime: new Date(
+        fixedNow.getTime() + 3 * 24 * 60 * 60 * 1000 + 4 * 60 * 60 * 1000,
+      ).toISOString(),
     });
     (eventRepo.getEvents as Mock).mockResolvedValueOnce([upcoming]);
     const ctx = makeShowCtx('/events 5');
@@ -407,9 +476,6 @@ describe('createEventActionHandler — event:list back-to-list fix', () => {
   function makeHandler(defaultDaysAhead: number) {
     return createEventActionHandler({
       eventRepository: eventRepo,
-      locatorRepository: {
-        getEventData: vi.fn().mockResolvedValue(null),
-      } as never,
       watchRepository: {
         list: vi.fn().mockResolvedValue([]),
         get: vi.fn(),
@@ -454,5 +520,74 @@ describe('createEventActionHandler — event:list back-to-list fix', () => {
     const [startAfter, startBefore] = (eventRepo.getEvents as Mock).mock.calls[0] as [Date, Date];
     const delta = startBefore.getTime() - startAfter.getTime();
     expect(delta).toBe(7 * 24 * 60 * 60 * 1000 + 12 * 60 * 60 * 1000);
+  });
+
+  it('hides Back to list on event:<id> callback re-render when the user fetched by id/URL (no list state)', async () => {
+    // Pre-condition: the /events <id> path cleared the list state.
+    eventsPaginationState.clear(TEST_USER_ID);
+    (eventRepo.getEventById as Mock).mockResolvedValueOnce(baseEvent({ id: 498515 }));
+    (eventRepo.getEventRegistrations as Mock).mockResolvedValueOnce([]);
+    // A started event: isStarted true → Leaderboard/All tables shown.
+    (eventRepo.getEventDetail as Mock).mockResolvedValueOnce({
+      currentRound: { id: 9, roundNumber: 1, status: 'IN_PROGRESS' },
+    });
+
+    const editMessageText = vi.fn().mockResolvedValue(undefined);
+    const ctx = makeCallbackCtx('event:498515');
+    // Detail render edits in place because makeCallbackCtx carries a
+    // callbackQuery.message.
+    (ctx as unknown as { editMessageText: Mock }).editMessageText = editMessageText;
+    await makeHandler(7)(ctx);
+
+    expect(editMessageText).toHaveBeenCalled();
+    const call = editMessageText.mock.calls[0] as [string, { reply_markup?: { inline_keyboard: { text: string }[][] } }];
+    const texts = (call[1]?.reply_markup?.inline_keyboard ?? []).flat().map((b) => b.text);
+    expect(texts).not.toContain('\u2190 Back to list');
+    expect(texts).toContain('\uD83C\uDFC6 Leaderboard');
+  });
+
+  it('shows Back to list on event:<id> callback re-render when the user has a list context', async () => {
+    eventsPaginationState.set(TEST_USER_ID, [baseEvent({ id: 498515 })], 7);
+    (eventRepo.getEventById as Mock).mockResolvedValueOnce(baseEvent({ id: 498515 }));
+    (eventRepo.getEventRegistrations as Mock).mockResolvedValueOnce([]);
+
+    const editMessageText = vi.fn().mockResolvedValue(undefined);
+    const ctx = makeCallbackCtx('event:498515');
+    (ctx as unknown as { editMessageText: Mock }).editMessageText = editMessageText;
+    await makeHandler(7)(ctx);
+
+    const call = editMessageText.mock.calls[0] as [string, { reply_markup?: { inline_keyboard: { text: string }[][] } }];
+    const texts = (call[1]?.reply_markup?.inline_keyboard ?? []).flat().map((b) => b.text);
+    expect(texts).toContain('\u2190 Back to list');
+  });
+
+  it('leaderboard falls back to the latest round that has standings data', async () => {
+    const round1 = { id: 1, roundNumber: 1, status: 'COMPLETE' as const, pairingsStatus: 'GENERATED', standingsStatus: 'GENERATED' };
+    const round2 = { id: 2, roundNumber: 2, status: 'IN_PROGRESS' as const, pairingsStatus: 'GENERATED', standingsStatus: 'NOT_GENERATED' };
+    const detail = {
+      event: {
+        ...baseEvent({ id: 498515 }),
+        tournamentPhases: [{ id: 1, status: 'IN_PROGRESS' as const, orderInPhases: 1, phaseName: 'P', rounds: [round1, round2] }],
+      },
+      currentRound: round2,
+      registrations: [],
+      pairings: [],
+      standings: [], // current round has no standings yet
+      fetchedAt: '2026-08-01T00:00:00Z',
+    };
+    (eventRepo.getEventDetail as Mock).mockResolvedValueOnce(detail);
+    (eventRepo.getEventStandings as Mock).mockResolvedValueOnce([
+      { rank: 1, name: 'Alice', wins: 1, losses: 0, draws: 0, matchPoints: 3, matchRecord: '1-0-0' },
+    ]);
+
+    const editMessageText = vi.fn().mockResolvedValue(undefined);
+    const ctx = makeCallbackCtx('event:498515:leaderboard');
+    (ctx as unknown as { editMessageText: Mock }).editMessageText = editMessageText;
+    await makeHandler(7)(ctx);
+
+    expect(eventRepo.getEventStandings).toHaveBeenCalledWith(1);
+    const call = editMessageText.mock.calls[0] as [string, unknown];
+    expect(String(call[0])).toContain('Round <b>1</b>');
+    expect(String(call[0])).toContain('<b>Alice</b>');
   });
 });

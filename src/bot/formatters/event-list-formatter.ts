@@ -8,29 +8,28 @@ const buttonDateFmt = new Intl.DateTimeFormat('en-GB', {
   timeZone: tz,
 });
 
-// Match eventType case-insensitively against the known riftfound type
+// Match eventType case-insensitively against the known V2 event type
 // substrings and return a colored circle emoji. The icons are part of
 // the button label only — never stored on the Event entity. Substring
 // match is intentional: defensive against upstream name tweaks
-// ("Summoner Skirmish" vs. "Skirmish"). "pre" matches "Pre-Rift",
-// "Pre Rift", "Prerift", etc.
+// ("LOCALS" vs. "Pre-Release LOCALS"). Verified values from the V2
+// API: "LOCALS" and "CONVENTIONS".
 function eventTypeIcon(eventType: string): string {
   const t = eventType.toLowerCase();
-  if (t.includes('skirmish')) return '\uD83D\uDD35';   // \U0001f535
-  if (t.includes('nexus night')) return '\uD83D\uDFE3'; // \U0001f7e3
-  if (t.includes('pre')) return '\uD83D\uDFE2';         // \U0001f7e2
-  return '\u26AA';                                       // ⚪
+  if (t.includes('locals')) return '\uD83D\uDD35';       // \U0001f535
+  if (t.includes('convention')) return '\uD83D\uDFE3';   // \U0001f7e3
+  return '\u26AA';                                        // ⚪
 }
 
 const MAX_BUTTON_LABEL = 64;
 
 function makeButton(ev: Event): EventListButton {
-  const dayStr = buttonDateFmt.format(ev.startDate);
+  const dayStr = buttonDateFmt.format(new Date(ev.startDatetime));
   const parts = [
     `${eventTypeIcon(ev.eventType)} ${dayStr}`,        // 🔵 Tue 21
     ev.eventType || 'Event',
-    ev.storeName,
-    `${ev.capacity.registered}/${ev.capacity.max}`,
+    ev.store.name,
+    `${ev.registeredCount}/${ev.capacity}`,
   ];
   const full = parts.join(' · ');                          // " · "
   const label = full.length <= MAX_BUTTON_LABEL
@@ -78,14 +77,14 @@ export function formatEventList(
 
   if (events.length === 0) {
     return {
-      body: `No events found in your area in the next ${dayLabel}.`,
+      body: `\uD83D\uDCED No events found in your area in the next ${dayLabel}.`,
       buttons: [],
     };
   }
 
   // Body: single count line
   const eventLabel = events.length === 1 ? 'event' : 'events';
-  const body = `${events.length} ${eventLabel} in the next ${dayLabel}`;
+  const body = `\uD83D\uDCC5 <b>${events.length}</b> ${eventLabel} in the next ${dayLabel}`;
 
   const totalPages = Math.ceil(events.length / pageSize);
   // Clamp currentPage to valid range
@@ -111,7 +110,7 @@ export function formatEventList(
 
     row.push({
       label: `Page ${page + 1} of ${totalPages}`,
-      callbackData: `event:page:${page}`,
+      callbackData: 'event:noop',
     });
 
     if (page < totalPages - 1) {
