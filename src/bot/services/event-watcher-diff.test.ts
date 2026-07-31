@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { detectPairingChange } from './event-watcher-diff.js';
 import type { EventWatch } from '../../core/entities/event-watch.js';
-import type { LocatorPairing } from '../../core/ports/locator-repository.js';
+import type { EventPairing } from '../../core/entities/event-detail.js';
 
 type WatchSnapshot = Pick<
   EventWatch,
@@ -18,13 +18,14 @@ function prev(overrides?: Partial<WatchSnapshot>): WatchSnapshot {
   };
 }
 
-function pairing(overrides?: Partial<LocatorPairing>): LocatorPairing {
+function pairing(overrides?: Partial<EventPairing>): EventPairing {
   return {
     tableNumber: 1,
     player1: 'Alice',
     player2: 'Bob',
     score1: null,
     score2: null,
+    isBye: false,
     ...overrides,
   };
 }

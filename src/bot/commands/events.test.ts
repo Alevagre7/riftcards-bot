@@ -51,6 +51,7 @@ function mockEventRepo(): IEventRepository {
     getEvents: vi.fn().mockResolvedValue([]),
     getEventById: vi.fn().mockResolvedValue(null),
     getEventRegistrations: vi.fn().mockResolvedValue([]),
+    getEventDetail: vi.fn().mockResolvedValue(null),
   };
 }
 
@@ -199,27 +200,36 @@ function makeShowCtx(text?: string): Context {
 
 function baseEvent(over: Partial<Event> = {}): Event {
   return {
-    id: '1',
+    id: 1,
     name: 'Test Event',
-    storeName: 'Test Store',
-    storeAddress: '',
-    storeWebsite: '',
-    storeEmail: '',
-    startDate: new Date('2026-08-01T18:00:00Z'),
-    endDate: new Date('2026-08-01T22:00:00Z'),
-    format: '',
-    category: '',
-    meetingType: '',
-    capacity: { registered: 0, max: 8 },
-    isFree: true,
-    costAmount: null,
-    costCurrency: '',
-    locatorUrl: 'https://locator.example/events/1',
+    displayStatus: 'upcoming',
+    eventStatus: 'SCHEDULED',
+    startDatetime: '2026-08-01T18:00:00+00:00',
+    endDatetime: '2026-08-01T22:00:00+00:00',
+    timezone: 'Europe/Madrid',
+    capacity: 8,
+    registeredCount: 0,
+    startingPlayerCount: 0,
+    store: {
+      id: 1,
+      name: 'Test Store',
+      fullAddress: '',
+      latitude: 0,
+      longitude: 0,
+      timezone: 'Europe/Madrid',
+      country: 'ES',
+    },
+    gameplayFormatName: '',
+    headerImageUrl: null,
+    queueStatus: 'ACCEPTING_SIGNUPS',
     eventType: '',
-    price: '',
+    eventFormat: '',
     description: '',
-    imageUrl: '',
-    externalUrl: null,
+    costInCents: 0,
+    currency: 'EUR',
+    isOnDemand: false,
+    isTestEvent: false,
+    tournamentPhases: [],
     ...over,
   };
 }
@@ -291,10 +301,10 @@ describe('createEventsCommand — /events window menu', () => {
   it('includes an in-progress event (started 2h ago, ends in 2h)', async () => {
     const fixedNow = new Date('2026-08-01T12:00:00Z');
     const inProgress = baseEvent({
-      id: '1',
+      id: 1,
       name: 'In-Progress Tournament',
-      startDate: new Date(fixedNow.getTime() - 2 * 60 * 60 * 1000),
-      endDate: new Date(fixedNow.getTime() + 2 * 60 * 60 * 1000),
+      startDatetime: new Date(fixedNow.getTime() - 2 * 60 * 60 * 1000).toISOString(),
+      endDatetime: new Date(fixedNow.getTime() + 2 * 60 * 60 * 1000).toISOString(),
     });
     (eventRepo.getEvents as Mock).mockResolvedValueOnce([inProgress]);
     const ctx = makeShowCtx('/events 1');
@@ -314,10 +324,10 @@ describe('createEventsCommand — /events window menu', () => {
   it('excludes a finished event (ended 1h ago)', async () => {
     const fixedNow = new Date('2026-08-01T12:00:00Z');
     const finished = baseEvent({
-      id: '1',
+      id: 1,
       name: 'Already Over',
-      startDate: new Date(fixedNow.getTime() - 3 * 60 * 60 * 1000),
-      endDate: new Date(fixedNow.getTime() - 1 * 60 * 60 * 1000),
+      startDatetime: new Date(fixedNow.getTime() - 3 * 60 * 60 * 1000).toISOString(),
+      endDatetime: new Date(fixedNow.getTime() - 1 * 60 * 60 * 1000).toISOString(),
     });
     (eventRepo.getEvents as Mock).mockResolvedValueOnce([finished]);
 
@@ -337,10 +347,12 @@ describe('createEventsCommand — /events window menu', () => {
   it('includes an upcoming event well within the window', async () => {
     const fixedNow = new Date('2026-08-01T12:00:00Z');
     const upcoming = baseEvent({
-      id: '1',
+      id: 1,
       name: 'Weekend Skirmish',
-      startDate: new Date(fixedNow.getTime() + 3 * 24 * 60 * 60 * 1000),
-      endDate: new Date(fixedNow.getTime() + 3 * 24 * 60 * 60 * 1000 + 4 * 60 * 60 * 1000),
+      startDatetime: new Date(fixedNow.getTime() + 3 * 24 * 60 * 60 * 1000).toISOString(),
+      endDatetime: new Date(
+        fixedNow.getTime() + 3 * 24 * 60 * 60 * 1000 + 4 * 60 * 60 * 1000,
+      ).toISOString(),
     });
     (eventRepo.getEvents as Mock).mockResolvedValueOnce([upcoming]);
     const ctx = makeShowCtx('/events 5');
@@ -407,9 +419,6 @@ describe('createEventActionHandler — event:list back-to-list fix', () => {
   function makeHandler(defaultDaysAhead: number) {
     return createEventActionHandler({
       eventRepository: eventRepo,
-      locatorRepository: {
-        getEventData: vi.fn().mockResolvedValue(null),
-      } as never,
       watchRepository: {
         list: vi.fn().mockResolvedValue([]),
         get: vi.fn(),

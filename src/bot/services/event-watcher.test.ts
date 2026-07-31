@@ -1,7 +1,10 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { createEventWatcher, EventWatcherDeps } from './event-watcher.js';
 import { IEventWatchRepository } from '../../core/ports/event-watch-repository.js';
-import { ILocatorRepository, LocatorEventData } from '../../core/ports/locator-repository.js';
+import { IEventRepository } from '../../core/ports/event-repository.js';
+import { EventDetail, EventPairing } from '../../core/entities/event-detail.js';
+import { Event } from '../../core/entities/event.js';
+import { ApiResponseError } from '../../core/errors/index.js';
 
 // ---------------------------------------------------------------------------
 // Mock factories
@@ -17,16 +20,20 @@ function mockWatchRepository(): IEventWatchRepository {
   };
 }
 
-function mockLocatorRepository(): ILocatorRepository {
+function mockEventRepository(): IEventRepository {
   return {
-    getEventData: vi.fn(),
+    getEvents: vi.fn(),
+    getEventById: vi.fn(),
+    getEventRegistrations: vi.fn(),
+    getEventDetail: vi.fn(),
   };
 }
 
 function makeDeps(overrides?: Partial<EventWatcherDeps>): EventWatcherDeps {
   return {
     watchRepository: mockWatchRepository(),
-    locatorRepository: mockLocatorRepository(),
+    eventRepository: mockEventRepository(),
+    defaultLocation: { latitude: 0, longitude: 0, numMiles: 50 },
     notify: vi.fn(),
     intervalMs: 30000,
     logger: vi.fn(),
@@ -34,15 +41,93 @@ function makeDeps(overrides?: Partial<EventWatcherDeps>): EventWatcherDeps {
   };
 }
 
-function makeEventData(overrides?: Partial<LocatorEventData>): LocatorEventData {
+function makeEvent(overrides?: Partial<Event>): Event {
   return {
-    eventId: 735205,
+    id: 735205,
     name: 'Test Event',
-    currentRound: 2,
-    roster: [],
-    standings: [],
+    displayStatus: 'inProgress',
+    eventStatus: 'IN_PROGRESS',
+    startDatetime: '2026-08-01T18:00:00+00:00',
+    endDatetime: '2026-08-01T22:00:00+00:00',
+    timezone: 'Europe/Madrid',
+    capacity: 8,
+    registeredCount: 4,
+    startingPlayerCount: 4,
+    store: {
+      id: 1,
+      name: 'Test Store',
+      fullAddress: '',
+      latitude: 0,
+      longitude: 0,
+      timezone: 'Europe/Madrid',
+      country: 'ES',
+    },
+    gameplayFormatName: 'Constructed',
+    headerImageUrl: null,
+    queueStatus: 'ACCEPTING_SIGNUPS',
+    eventType: 'LOCALS',
+    eventFormat: 'OTHER',
+    description: '',
+    costInCents: 0,
+    currency: 'EUR',
+    isOnDemand: false,
+    isTestEvent: false,
+    tournamentPhases: [],
+    ...overrides,
+  };
+}
+
+function makePairing(overrides?: Partial<EventPairing>): EventPairing {
+  return {
+    tableNumber: 1,
+    player1: 'Alice',
+    player2: 'Bob',
+    score1: null,
+    score2: null,
+    isBye: false,
+    ...overrides,
+  };
+}
+
+function makeDetail(overrides?: Partial<EventDetail>): EventDetail {
+  return {
+    event: makeEvent(),
+    currentRound: {
+      id: 1172657,
+      roundNumber: 2,
+      status: 'IN_PROGRESS',
+      pairingsStatus: 'GENERATED',
+      standingsStatus: 'GENERATED',
+    },
+    registrations: [],
     pairings: [],
+    standings: [],
     fetchedAt: new Date().toISOString(),
+    ...overrides,
+  };
+}
+
+function makeWatch(overrides: Partial<{
+  telegramId: number;
+  eventId: number;
+  eventName: string;
+  eventUsername: string;
+  lastSeenRound: number | null;
+  lastSeenTable: number | null;
+  lastSeenOpponent: string | null;
+  lastSeenResult: 'win' | 'loss' | 'draw' | 'bye' | null;
+}> = {}) {
+  return {
+    telegramId: 1,
+    eventId: 735205,
+    eventName: 'Test Event',
+    eventUsername: 'Alice',
+    lastSeenRound: null,
+    lastSeenTable: null,
+    lastSeenOpponent: null,
+    lastSeenResult: null,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
     ...overrides,
   };
 }
@@ -53,52 +138,31 @@ function makeEventData(overrides?: Partial<LocatorEventData>): LocatorEventData 
 
 describe('createEventWatcher', () => {
   describe('tick', () => {
-    it('returns without calling locator when no watches', async () => {
+    it('returns without calling the event repository when no watches', async () => {
       const deps = makeDeps();
       const watcher = createEventWatcher(deps);
 
       await watcher.tick();
 
-      expect(deps.locatorRepository.getEventData).not.toHaveBeenCalled();
+      expect(deps.eventRepository.getEventDetail).not.toHaveBeenCalled();
     });
 
     it('notifies on new-round and updates snapshot', async () => {
       const watchRepo = mockWatchRepository();
-      watchRepo.list = vi.fn().mockResolvedValue([
-        {
-          telegramId: 1,
-          eventId: 735205,
-          eventName: 'Test Event',
-          eventUsername: 'Alice',
-          lastSeenRound: null,
-          lastSeenTable: null,
-          lastSeenOpponent: null,
-          lastSeenResult: null,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        },
-      ]);
+      watchRepo.list = vi.fn().mockResolvedValue([makeWatch()]);
 
-      const locatorRepo = mockLocatorRepository();
-      locatorRepo.getEventData = vi.fn().mockResolvedValue(
-        makeEventData({
-          currentRound: 1,
-          pairings: [
-            {
-              tableNumber: 5,
-              player1: 'Alice',
-              player2: 'Bob',
-              score1: null,
-              score2: null,
-            },
-          ],
+      const eventRepo = mockEventRepository();
+      eventRepo.getEventDetail = vi.fn().mockResolvedValue(
+        makeDetail({
+          currentRound: { id: 1, roundNumber: 1, status: 'IN_PROGRESS', pairingsStatus: 'GENERATED', standingsStatus: 'GENERATED' },
+          pairings: [makePairing({ tableNumber: 5 })],
         }),
       );
 
       const notify = vi.fn().mockResolvedValue(undefined);
       const deps = makeDeps({
         watchRepository: watchRepo,
-        locatorRepository: locatorRepo,
+        eventRepository: eventRepo,
         notify,
       });
       const watcher = createEventWatcher(deps);
@@ -118,75 +182,42 @@ describe('createEventWatcher', () => {
       });
     });
 
-    it('batches two watches on the same event into one locator call', async () => {
+    it('batches two watches on the same event into one detail call', async () => {
       const watchRepo = mockWatchRepository();
       watchRepo.list = vi.fn().mockResolvedValue([
-        {
-          telegramId: 1,
-          eventId: 735205,
-          eventName: 'Test Event',
-          eventUsername: 'Alice',
-          lastSeenRound: null,
-          lastSeenTable: null,
-          lastSeenOpponent: null,
-          lastSeenResult: null,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        },
-        {
-          telegramId: 2,
-          eventId: 735205,
-          eventName: 'Test Event',
-          eventUsername: 'Charlie',
-          lastSeenRound: null,
-          lastSeenTable: null,
-          lastSeenOpponent: null,
-          lastSeenResult: null,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        },
+        makeWatch({ telegramId: 1, eventUsername: 'Alice' }),
+        makeWatch({ telegramId: 2, eventUsername: 'Charlie' }),
       ]);
 
-      const locatorRepo = mockLocatorRepository();
-      locatorRepo.getEventData = vi.fn().mockResolvedValue(
-        makeEventData({
-          currentRound: 1,
+      const eventRepo = mockEventRepository();
+      eventRepo.getEventDetail = vi.fn().mockResolvedValue(
+        makeDetail({
+          currentRound: { id: 1, roundNumber: 1, status: 'IN_PROGRESS', pairingsStatus: 'GENERATED', standingsStatus: 'GENERATED' },
           pairings: [
-            { tableNumber: 1, player1: 'Alice', player2: 'Bob', score1: null, score2: null },
-            { tableNumber: 2, player1: 'Charlie', player2: 'Dave', score1: null, score2: null },
+            makePairing({ tableNumber: 1, player1: 'Alice', player2: 'Bob' }),
+            makePairing({ tableNumber: 2, player1: 'Charlie', player2: 'Dave' }),
           ],
         }),
       );
 
-      const deps = makeDeps({ watchRepository: watchRepo, locatorRepository: locatorRepo });
+      const deps = makeDeps({ watchRepository: watchRepo, eventRepository: eventRepo });
       const watcher = createEventWatcher(deps);
 
       await watcher.tick();
 
-      expect(locatorRepo.getEventData).toHaveBeenCalledTimes(1);
+      expect(eventRepo.getEventDetail).toHaveBeenCalledTimes(1);
     });
 
-    it('deletes watches when locator returns null (404)', async () => {
+    it('deletes watches when detail returns null (404)', async () => {
       const watchRepo = mockWatchRepository();
       watchRepo.list = vi.fn().mockResolvedValue([
-        {
-          telegramId: 1,
-          eventId: 999,
-          eventName: 'Gone',
-          eventUsername: 'Alice',
-          lastSeenRound: null,
-          lastSeenTable: null,
-          lastSeenOpponent: null,
-          lastSeenResult: null,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        },
+        makeWatch({ telegramId: 1, eventId: 999, eventName: 'Gone' }),
       ]);
 
-      const locatorRepo = mockLocatorRepository();
-      locatorRepo.getEventData = vi.fn().mockResolvedValue(null);
+      const eventRepo = mockEventRepository();
+      eventRepo.getEventDetail = vi.fn().mockResolvedValue(null);
 
-      const deps = makeDeps({ watchRepository: watchRepo, locatorRepository: locatorRepo });
+      const deps = makeDeps({ watchRepository: watchRepo, eventRepository: eventRepo });
       const watcher = createEventWatcher(deps);
 
       await watcher.tick();
@@ -196,27 +227,12 @@ describe('createEventWatcher', () => {
 
     it('preserves watch on 5xx and does not call updateLastSeen', async () => {
       const watchRepo = mockWatchRepository();
-      watchRepo.list = vi.fn().mockResolvedValue([
-        {
-          telegramId: 1,
-          eventId: 735205,
-          eventName: 'Test',
-          eventUsername: 'Alice',
-          lastSeenRound: null,
-          lastSeenTable: null,
-          lastSeenOpponent: null,
-          lastSeenResult: null,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        },
-      ]);
+      watchRepo.list = vi.fn().mockResolvedValue([makeWatch()]);
 
-      const locatorRepo = mockLocatorRepository();
-      locatorRepo.getEventData = vi.fn().mockRejectedValue(
-        Object.assign(new Error('500'), { code: 'API_RESPONSE_ERROR' }),
-      );
+      const eventRepo = mockEventRepository();
+      eventRepo.getEventDetail = vi.fn().mockRejectedValue(new ApiResponseError('Riftbound V2', 500));
 
-      const deps = makeDeps({ watchRepository: watchRepo, locatorRepository: locatorRepo });
+      const deps = makeDeps({ watchRepository: watchRepo, eventRepository: eventRepo });
       const watcher = createEventWatcher(deps);
 
       await watcher.tick();
@@ -227,28 +243,13 @@ describe('createEventWatcher', () => {
 
     it('deletes watch on notify 403 (user blocked)', async () => {
       const watchRepo = mockWatchRepository();
-      watchRepo.list = vi.fn().mockResolvedValue([
-        {
-          telegramId: 1,
-          eventId: 735205,
-          eventName: 'Test',
-          eventUsername: 'Alice',
-          lastSeenRound: null,
-          lastSeenTable: null,
-          lastSeenOpponent: null,
-          lastSeenResult: null,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        },
-      ]);
+      watchRepo.list = vi.fn().mockResolvedValue([makeWatch()]);
 
-      const locatorRepo = mockLocatorRepository();
-      locatorRepo.getEventData = vi.fn().mockResolvedValue(
-        makeEventData({
-          currentRound: 1,
-          pairings: [
-            { tableNumber: 1, player1: 'Alice', player2: 'Bob', score1: null, score2: null },
-          ],
+      const eventRepo = mockEventRepository();
+      eventRepo.getEventDetail = vi.fn().mockResolvedValue(
+        makeDetail({
+          currentRound: { id: 1, roundNumber: 1, status: 'IN_PROGRESS', pairingsStatus: 'GENERATED', standingsStatus: 'GENERATED' },
+          pairings: [makePairing()],
         }),
       );
 
@@ -260,7 +261,7 @@ describe('createEventWatcher', () => {
 
       const deps = makeDeps({
         watchRepository: watchRepo,
-        locatorRepository: locatorRepo,
+        eventRepository: eventRepo,
         notify,
       });
       const watcher = createEventWatcher(deps);
@@ -273,26 +274,20 @@ describe('createEventWatcher', () => {
     it('clears snapshot when round ends (currentRound === null)', async () => {
       const watchRepo = mockWatchRepository();
       watchRepo.list = vi.fn().mockResolvedValue([
-        {
-          telegramId: 1,
-          eventId: 735205,
-          eventName: 'Test',
-          eventUsername: 'Alice',
+        makeWatch({
           lastSeenRound: 2,
           lastSeenTable: 1,
           lastSeenOpponent: 'Bob',
           lastSeenResult: 'win',
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        },
+        }),
       ]);
 
-      const locatorRepo = mockLocatorRepository();
-      locatorRepo.getEventData = vi.fn().mockResolvedValue(
-        makeEventData({ currentRound: null, pairings: [] }),
+      const eventRepo = mockEventRepository();
+      eventRepo.getEventDetail = vi.fn().mockResolvedValue(
+        makeDetail({ currentRound: null, pairings: [] }),
       );
 
-      const deps = makeDeps({ watchRepository: watchRepo, locatorRepository: locatorRepo });
+      const deps = makeDeps({ watchRepository: watchRepo, eventRepository: eventRepo });
       const watcher = createEventWatcher(deps);
 
       await watcher.tick();
@@ -308,34 +303,26 @@ describe('createEventWatcher', () => {
     it('notifies result-submitted when scores appear', async () => {
       const watchRepo = mockWatchRepository();
       watchRepo.list = vi.fn().mockResolvedValue([
-        {
-          telegramId: 1,
-          eventId: 735205,
-          eventName: 'Test',
-          eventUsername: 'Alice',
+        makeWatch({
           lastSeenRound: 1,
           lastSeenTable: 1,
           lastSeenOpponent: 'Bob',
           lastSeenResult: null,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        },
+        }),
       ]);
 
-      const locatorRepo = mockLocatorRepository();
-      locatorRepo.getEventData = vi.fn().mockResolvedValue(
-        makeEventData({
-          currentRound: 1,
-          pairings: [
-            { tableNumber: 1, player1: 'Alice', player2: 'Bob', score1: 2, score2: 1 },
-          ],
+      const eventRepo = mockEventRepository();
+      eventRepo.getEventDetail = vi.fn().mockResolvedValue(
+        makeDetail({
+          currentRound: { id: 1, roundNumber: 1, status: 'COMPLETE', pairingsStatus: 'GENERATED', standingsStatus: 'GENERATED' },
+          pairings: [makePairing({ score1: 2, score2: 1 })],
         }),
       );
 
       const notify = vi.fn().mockResolvedValue(undefined);
       const deps = makeDeps({
         watchRepository: watchRepo,
-        locatorRepository: locatorRepo,
+        eventRepository: eventRepo,
         notify,
       });
       const watcher = createEventWatcher(deps);

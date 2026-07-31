@@ -3,16 +3,12 @@ import { Telegraf, Context } from 'telegraf';
 import { loadConfig } from './config.js';
 import { RiftapiAdapter } from './infrastructure/apis/riftapi.adapter.js';
 import { RiftcodexAdapter } from './infrastructure/apis/riftcodex.adapter.js';
-import { EventsAdapter } from './infrastructure/apis/events.adapter.js';
-import { RiftfoundAdapter } from './infrastructure/apis/riftfound.adapter.js';
-import { FallbackEventsAdapter } from './infrastructure/apis/fallback-events.adapter.js';
+import { RiftboundV2Adapter } from './infrastructure/apis/riftbound-v2.adapter.js';
 import { NexusTableAdapter } from './infrastructure/apis/nexus-table.adapter.js';
-import { LocatorHtmlAdapter } from './infrastructure/apis/locator.adapter.js';
 import { INexusTableRepository } from './core/ports/nexus-table-repository.js';
 import { ICardRepository } from './core/ports/card-repository.js';
 import { IUserSettingsRepository } from './core/ports/user-settings-repository.js';
 import { EventLocation, IEventRepository } from './core/ports/event-repository.js';
-import { ILocatorRepository } from './core/ports/locator-repository.js';
 import { IEventWatchRepository } from './core/ports/event-watch-repository.js';
 import { errorHandler } from './bot/middleware/error-handler.js';
 import { createStartCommand } from './bot/commands/start.js';
@@ -59,21 +55,12 @@ async function main() {
 
   const cardRepository = buildCardRepository(config);
 
-  // Events repository: riftfound as primary, old EventsAdapter as fallback
-  const riftfoundAdapter = new RiftfoundAdapter({
-    baseUrl: config.riftfoundApiUrl,
+  // Events repository: single upstream — the official V2 API
+  const eventRepository: IEventRepository = new RiftboundV2Adapter({
+    baseUrl: config.riftboundV2BaseUrl,
     timeoutMs: config.apiTimeoutMs,
     retryAttempts: config.apiRetryAttempts,
   });
-  const oldAdapter = new EventsAdapter({
-    baseUrl: config.eventsApiUrl,
-    timeoutMs: config.apiTimeoutMs,
-    retryAttempts: config.apiRetryAttempts,
-  });
-  const eventRepository: IEventRepository = new FallbackEventsAdapter(
-    riftfoundAdapter,
-    oldAdapter,
-  );
   const defaultLocation: EventLocation = {
     latitude: config.eventsLatitude,
     longitude: config.eventsLongitude,
@@ -97,20 +84,14 @@ async function main() {
     retryAttempts: config.apiRetryAttempts,
   });
 
-  // Locator repository (HTML parser for roster/pairings)
-  const locatorRepository: ILocatorRepository = new LocatorHtmlAdapter({
-    baseUrl: 'https://locator.riftbound.uvsgames.com',
-    timeoutMs: config.apiTimeoutMs,
-    retryAttempts: config.apiRetryAttempts,
-  });
-
   // Build the event watcher service (background polling)
   const notify = async (telegramId: number, body: string): Promise<void> => {
     await bot.telegram.sendMessage(telegramId, body, { parse_mode: 'HTML' });
   };
   const eventWatcher = createEventWatcher({
     watchRepository: eventWatchRepository,
-    locatorRepository,
+    eventRepository,
+    defaultLocation,
     notify,
     intervalMs: config.nexusWatcherIntervalMs,
   });
@@ -156,7 +137,6 @@ async function main() {
       userSettingsRepository,
       defaultLocation,
       daysAhead: config.eventsDaysAhead,
-      locatorRepository,
       watchRepository: eventWatchRepository,
     }),
   );
@@ -190,7 +170,6 @@ async function main() {
     /^(event:.+|admin:stop:\d+)$/,
     createEventActionHandler({
       eventRepository,
-      locatorRepository,
       watchRepository: eventWatchRepository,
       userSettingsRepository,
       defaultLocation,

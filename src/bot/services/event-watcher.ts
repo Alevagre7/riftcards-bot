@@ -1,14 +1,15 @@
-// EventWatcher — background service that polls the locator for every
+// EventWatcher — background service that polls the V2 API for every
 // active event watch and notifies users on pairing changes.
 //
 // Factory pattern (matches the bot commands). Exports a single factory
 // that returns { start, stop, tick }.
 //
-// Batching: watches are grouped by eventId. One locator call per event
-// per tick regardless of how many watches are on that event.
+// Batching: watches are grouped by eventId. One getEventDetail call per
+// event per tick regardless of how many watches are on that event.
 
 import { IEventWatchRepository } from '../../core/ports/event-watch-repository.js';
-import { ILocatorRepository } from '../../core/ports/locator-repository.js';
+import { IEventRepository, EventLocation } from '../../core/ports/event-repository.js';
+import { EventDetail } from '../../core/entities/event-detail.js';
 import { ApiResponseError, ApiTimeoutError } from '../../core/errors/index.js';
 import { detectPairingChange, ChangeReason } from './event-watcher-diff.js';
 
@@ -18,7 +19,10 @@ import { detectPairingChange, ChangeReason } from './event-watcher-diff.js';
 
 export interface EventWatcherDeps {
   watchRepository: IEventWatchRepository;
-  locatorRepository: ILocatorRepository;
+  eventRepository: IEventRepository;
+  // The location used for getEventDetail fetches (same global default
+  // the /events command uses).
+  defaultLocation: EventLocation;
   notify: (telegramId: number, body: string) => Promise<void>;
   intervalMs: number;
   logger?: (message: string, meta?: Record<string, unknown>) => void;
@@ -133,9 +137,9 @@ export function createEventWatcher(deps: EventWatcherDeps): EventWatcher {
       [...byEvent.entries()].map(async ([eventId, eventWatches]) => {
         log(`[event-watcher] fetching event ${eventId} (${eventWatches.length} watches)`);
 
-        let data: Awaited<ReturnType<typeof deps.locatorRepository.getEventData>>;
+        let data: EventDetail | null;
         try {
-          data = await deps.locatorRepository.getEventData(eventId);
+          data = await deps.eventRepository.getEventDetail(eventId, deps.defaultLocation);
         } catch (error: unknown) {
           if (error instanceof ApiTimeoutError ||
               (error instanceof ApiResponseError && /5\d{2}/.test(error.message))) {
@@ -182,15 +186,17 @@ export function createEventWatcher(deps: EventWatcherDeps): EventWatcher {
 
   async function processWatch(
     watch: Awaited<ReturnType<typeof deps.watchRepository.list>>[number],
-    data: Awaited<ReturnType<typeof deps.locatorRepository.getEventData>>,
+    data: EventDetail,
   ): Promise<void> {
     if (!data) return;
+
+    const currentRoundNumber = data.currentRound == null ? null : data.currentRound.roundNumber;
 
     // Find the pairing containing the watched username
     // Round ended check MUST happen before pairing lookup: when a round
     // finishes, currentRound becomes null and pairings are empty.
-    if (watch.lastSeenRound !== null && data.currentRound === null) {
-      log(`[event-watcher] round ended for event ${data.eventId} — clearing snapshot`, {
+    if (watch.lastSeenRound !== null && currentRoundNumber === null) {
+      log(`[event-watcher] round ended for event ${data.event.id} — clearing snapshot`, {
         telegramId: watch.telegramId,
       });
       await deps.watchRepository.updateLastSeen(watch.telegramId, {
@@ -214,10 +220,10 @@ export function createEventWatcher(deps: EventWatcherDeps): EventWatcher {
       return;
     }
 
-    const diff = detectPairingChange(watch, pairing, data.currentRound);
+    const diff = detectPairingChange(watch, pairing, currentRoundNumber);
 
     if (diff.changed) {
-      const body = buildNotifyBody(diff.reasons, pairing, data.currentRound, watch.eventUsername);
+      const body = buildNotifyBody(diff.reasons, pairing, currentRoundNumber, watch.eventUsername);
       try {
         await deps.notify(watch.telegramId, body);
       } catch (notifyError: unknown) {
@@ -238,7 +244,7 @@ export function createEventWatcher(deps: EventWatcherDeps): EventWatcher {
         : null;
 
       await deps.watchRepository.updateLastSeen(watch.telegramId, {
-        round: data.currentRound,
+        round: currentRoundNumber,
         table: pairing.tableNumber,
         opponent,
         result: resultType,

@@ -27,12 +27,10 @@ const configSchema = z.object({
   apiRetryAttempts: z.coerce.number().default(3),
 
   // Events adapter. Defaults to Seville (37.39, -5.99) at 50 mi /
-  // 7 days; the EVENTS_API_URL defaults to the upstream directly
-  // (the Cloudflare Worker proxy is gone). The lat/lon/radius here
-  // are the global default used when a user has not configured
-  // their own location via /events set. See ADR-0006.
-  riftfoundApiUrl: z.string().url().default('https://www.riftfound.com'),
-  eventsApiUrl: z.string().url().default('https://api.cloudflare.riftbound.uvsgames.com'),
+  // 7 days. The lat/lon/radius here are the global default used
+  // when a user has not configured their own location via
+  // /events set. See ADR-0006.
+  riftboundV2BaseUrl: z.string().url().default('https://api.riftbound.uvsgames.com/api/v2'),
   eventsLatitude: z.coerce.number().default(37.39),
   eventsLongitude: z.coerce.number().default(-5.99),
   eventsRadiusKm: z.coerce.number().default(80), // 50 miles
@@ -88,8 +86,7 @@ export function loadConfig(): Config {
     webhookUrl: process.env['WEBHOOK_URL'],
     apiTimeoutMs: process.env['API_TIMEOUT_MS'],
     apiRetryAttempts: process.env['API_RETRY_ATTEMPTS'],
-    riftfoundApiUrl: process.env['RIFTFOUND_API_URL'],
-    eventsApiUrl: process.env['EVENTS_API_URL'],
+    riftboundV2BaseUrl: process.env['RIFTBOUND_V2_BASE_URL'],
     eventsLatitude: process.env['EVENTS_LATITUDE'],
     eventsLongitude: process.env['EVENTS_LONGITUDE'],
     eventsRadiusKm: process.env['EVENTS_RADIUS_KM'],

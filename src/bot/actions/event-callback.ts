@@ -2,8 +2,8 @@ import { Context } from 'telegraf';
 import type { InlineKeyboardButton } from '@telegraf/types/markup.js';
 import { IEventRepository, EventLocation } from '../../core/ports/event-repository.js';
 import { IUserSettingsRepository } from '../../core/ports/user-settings-repository.js';
-import { ILocatorRepository } from '../../core/ports/locator-repository.js';
 import { IEventWatchRepository } from '../../core/ports/event-watch-repository.js';
+import { EventRegistration } from '../../core/entities/event-registration.js';
 import { renderEventList, renderEventDetail, renderEventsPage } from '../commands/events.js';
 import { formatEventLeaderboard } from '../formatters/event-leaderboard-formatter.js';
 import { formatEventRounds } from '../formatters/event-rounds-formatter.js';
@@ -11,7 +11,6 @@ import { eventsPaginationState } from '../state/events-pagination-state.js';
 
 interface EventActionDeps {
   eventRepository: IEventRepository;
-  locatorRepository: ILocatorRepository;
   watchRepository: IEventWatchRepository;
   userSettingsRepository: IUserSettingsRepository;
   defaultLocation: EventLocation;
@@ -70,14 +69,14 @@ export function createEventActionHandler(deps: EventActionDeps) {
     // Leaderboard view
     const leaderboardMatch = /^event:(\d+):leaderboard$/.exec(data);
     if (leaderboardMatch) {
-      await handleLeaderboard(ctx, deps, leaderboardMatch[1]!);
+      await handleLeaderboard(ctx, deps, parseInt(leaderboardMatch[1]!, 10));
       return;
     }
 
     // All tables / rounds view
     const roundsMatch = /^event:(\d+):rounds$/.exec(data);
     if (roundsMatch) {
-      await handleRounds(ctx, deps, roundsMatch[1]!);
+      await handleRounds(ctx, deps, parseInt(roundsMatch[1]!, 10));
       return;
     }
 
@@ -104,7 +103,7 @@ export function createEventActionHandler(deps: EventActionDeps) {
     // Single event detail
     const match = /^event:(\d+)$/.exec(data);
     if (match) {
-      const id = match[1]!;
+      const id = parseInt(match[1]!, 10);
       await renderEventDetail(ctx, deps, id);
       return;
     }
@@ -117,18 +116,17 @@ export function createEventActionHandler(deps: EventActionDeps) {
 // Leaderboard
 // ---------------------------------------------------------------------------
 
-async function handleLeaderboard(ctx: Context, deps: EventActionDeps, eventIdStr: string): Promise<void> {
-  const eventId = parseInt(eventIdStr, 10);
-  if (isNaN(eventId)) {
-    await ctx.answerCbQuery('Invalid event.');
-    return;
-  }
-  const data = await deps.locatorRepository.getEventData(eventId);
+async function handleLeaderboard(ctx: Context, deps: EventActionDeps, eventId: number): Promise<void> {
+  const data = await deps.eventRepository.getEventDetail(eventId, deps.defaultLocation);
   if (!data) {
-    await ctx.answerCbQuery('Locator data not available.');
+    await ctx.answerCbQuery('Event data not available.');
     return;
   }
-  const body = formatEventLeaderboard(data);
+  const body = formatEventLeaderboard({
+    name: data.event.name,
+    currentRound: data.currentRound == null ? null : data.currentRound.roundNumber,
+    standings: data.standings,
+  });
   await ctx.editMessageText(body);
 }
 
@@ -136,18 +134,17 @@ async function handleLeaderboard(ctx: Context, deps: EventActionDeps, eventIdStr
 // Rounds
 // ---------------------------------------------------------------------------
 
-async function handleRounds(ctx: Context, deps: EventActionDeps, eventIdStr: string): Promise<void> {
-  const eventId = parseInt(eventIdStr, 10);
-  if (isNaN(eventId)) {
-    await ctx.answerCbQuery('Invalid event.');
-    return;
-  }
-  const data = await deps.locatorRepository.getEventData(eventId);
+async function handleRounds(ctx: Context, deps: EventActionDeps, eventId: number): Promise<void> {
+  const data = await deps.eventRepository.getEventDetail(eventId, deps.defaultLocation);
   if (!data) {
-    await ctx.answerCbQuery('Locator data not available.');
+    await ctx.answerCbQuery('Event data not available.');
     return;
   }
-  const body = formatEventRounds(data);
+  const body = formatEventRounds({
+    name: data.event.name,
+    currentRound: data.currentRound,
+    pairings: data.pairings,
+  });
   await ctx.editMessageText(body);
 }
 
@@ -162,19 +159,19 @@ async function handleWatchStart(
   deps: EventActionDeps,
   eventId: number,
 ): Promise<void> {
-  const data = await deps.locatorRepository.getEventData(eventId);
+  const data = await deps.eventRepository.getEventDetail(eventId, deps.defaultLocation);
   if (!data) {
-    await ctx.answerCbQuery('Locator unavailable for this event.', { show_alert: true });
+    await ctx.answerCbQuery('Event data not available.', { show_alert: true });
     return;
   }
 
-  await sendRosterPage(ctx, data.eventId, data.roster, 0);
+  await sendRosterPage(ctx, data.event.id, data.registrations, 0);
 }
 
 async function sendRosterPage(
   ctx: Context,
   eventId: number,
-  roster: readonly { displayName: string; status: string; profileImageUrl: string | null }[],
+  roster: readonly EventRegistration[],
   page: number,
 ): Promise<void> {
   const totalPages = Math.ceil(roster.length / NAMES_PER_PAGE);
@@ -189,7 +186,7 @@ async function sendRosterPage(
     const idx = start + i;
     buttons.push([
       {
-        text: `${entry.displayName} (${entry.status})`,
+        text: `${entry.name} (${entry.status})`,
         callback_data: `event:${eventId}:watch:${page}:${idx}`,
       },
     ]);
@@ -229,13 +226,13 @@ async function handleWatchSelect(
     return;
   }
 
-  const data = await deps.locatorRepository.getEventData(eventId);
+  const data = await deps.eventRepository.getEventDetail(eventId, deps.defaultLocation);
   if (!data) {
     await ctx.answerCbQuery('Roster changed, please try again.', { show_alert: true });
     return;
   }
 
-  const rosterEntry = data.roster[idx];
+  const rosterEntry = data.registrations[idx];
   if (!rosterEntry) {
     await ctx.answerCbQuery('Roster changed, please try again.', { show_alert: true });
     return;
@@ -245,8 +242,8 @@ async function handleWatchSelect(
   await deps.watchRepository.upsert({
     telegramId: userId,
     eventId,
-    eventName: data.name,
-    eventUsername: rosterEntry.displayName,
+    eventName: data.event.name,
+    eventUsername: rosterEntry.name,
     lastSeenRound: null,
     lastSeenTable: null,
     lastSeenOpponent: null,

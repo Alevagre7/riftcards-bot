@@ -3,7 +3,7 @@
 // multiple reasons may fire in one tick.
 
 import { EventWatch } from '../../core/entities/event-watch.js';
-import { LocatorPairing } from '../../core/ports/locator-repository.js';
+import { EventPairing } from '../../core/entities/event-detail.js';
 
 export type ChangeReason =
   | 'new-round'
@@ -26,7 +26,7 @@ export function detectPairingChange(
     | 'lastSeenOpponent'
     | 'lastSeenResult'
   >,
-  next: LocatorPairing,
+  next: EventPairing,
   currentRound: number | null,
 ): PairingDiff {
   const reasons: ChangeReason[] = [];

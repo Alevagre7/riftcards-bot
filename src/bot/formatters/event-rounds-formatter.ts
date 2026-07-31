@@ -1,24 +1,22 @@
-// formatEventRounds — renders round-by-round pairing data.
-//
-// The locator currently only exposes the current round in SSR HTML,
-// so this formatter renders that single round and appends a note
-// that the round-by-round view is limited. The structure allows
-// future extension when more round data becomes available.
+// formatEventRounds — renders the current round's pairings.
 
-import { LocatorEventData } from '../../core/ports/locator-repository.js';
+import { EventRoundSummary } from '../../core/entities/event.js';
+import { EventPairing } from '../../core/entities/event-detail.js';
 
 export interface RoundsData {
-  /** The current round pairings (only data source today). */
-  readonly currentRound: number | null;
+  /** The event display name. */
+  readonly name: string;
+  /** The derived current round (null when none is active). */
+  readonly currentRound: EventRoundSummary | null;
   /** Flat list of pairings for the current round. */
-  readonly pairings: readonly LocatorEventData['pairings'][number][];
+  readonly pairings: readonly EventPairing[];
 }
 
-export function formatEventRounds(data: LocatorEventData): string {
+export function formatEventRounds(data: RoundsData): string {
   const lines: string[] = [];
 
   lines.push(
-    `\uD83C\uDFB2 ${data.name} \u2014 Round ${data.currentRound ?? '?'}`,
+    `\uD83C\uDFB2 ${data.name} \u2014 Round ${data.currentRound?.roundNumber ?? '?'}`,
   );
   lines.push('');
 

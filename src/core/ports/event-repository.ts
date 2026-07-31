@@ -1,5 +1,6 @@
 import { Event } from '../entities/event.js';
 import { EventRegistration } from '../entities/event-registration.js';
+import { EventDetail } from '../entities/event-detail.js';
 
 // EventLocation is the per-call location passed to IEventRepository.
 // The location may come from the user's saved preference, the global
@@ -22,12 +23,21 @@ export interface IEventRepository {
   ): Promise<Event[]>;
 
   getEventById(
-    id: string,
+    id: number,
     location: EventLocation,
   ): Promise<Event | null>;
 
   getEventRegistrations(
-    id: string,
+    id: number,
     location: EventLocation,
   ): Promise<EventRegistration[]>;
+
+  /** Fetch the live detail bundle (event + registrations + current
+   *  round's pairings/standings). Returns null if the event doesn't
+   *  exist (404). Throws ApiResponseError / ApiTimeoutError on
+   *  transient failures. */
+  getEventDetail(
+    id: number,
+    location: EventLocation,
+  ): Promise<EventDetail | null>;
 }
