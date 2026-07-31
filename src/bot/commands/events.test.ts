@@ -188,6 +188,61 @@ describe('createEventsCommand — /events set inline coords', () => {
   });
 });
 
+describe('createEventsCommand — /events <id> and <url> debug path', () => {
+  let userSettings: ReturnType<typeof mockUserSettingsRepo>;
+  let eventRepo: IEventRepository;
+  beforeEach(() => {
+    userSettings = mockUserSettingsRepo();
+    eventRepo = mockEventRepo();
+    setupFlow.cancel(TEST_USER_ID);
+  });
+
+  function makeCmd() {
+    return createEventsCommand({
+      eventRepository: eventRepo,
+      userSettingsRepository: userSettings,
+      defaultLocation: { latitude: 0, longitude: 0, numMiles: 50 },
+      daysAhead: 7,
+    });
+  }
+
+  it('/events <id> (>= 1000) renders detail for that event id', async () => {
+    (eventRepo.getEventById as Mock).mockResolvedValueOnce(baseEvent({ id: 498515 }));
+    (eventRepo.getEventRegistrations as Mock).mockResolvedValueOnce([]);
+    (eventRepo.getEventDetail as Mock).mockResolvedValueOnce(null);
+
+    const ctx = makeCtx('/events 498515');
+    await makeCmd()(ctx);
+
+    expect(eventRepo.getEventById).toHaveBeenCalledWith(498515, expect.anything());
+    // The detail page is sent as a reply (not edit) because the
+    // command path is not a callback query.
+    const replyCall = (ctx.reply as Mock).mock.calls.find((c) => typeof c[0] === 'string');
+    expect(replyCall).toBeDefined();
+    expect(String(replyCall![0])).toContain('<b>Test Event</b>');
+  });
+
+  it('/events <locator-url> extracts the id and renders detail', async () => {
+    (eventRepo.getEventById as Mock).mockResolvedValueOnce(baseEvent({ id: 498515 }));
+    (eventRepo.getEventRegistrations as Mock).mockResolvedValueOnce([]);
+    (eventRepo.getEventDetail as Mock).mockResolvedValueOnce(null);
+
+    const ctx = makeCtx('/events https://locator.riftbound.uvsgames.com/events/498515');
+    await makeCmd()(ctx);
+
+    expect(eventRepo.getEventById).toHaveBeenCalledWith(498515, expect.anything());
+  });
+
+  it('/events <small number> still means days (no event lookup)', async () => {
+    (eventRepo.getEvents as Mock).mockResolvedValueOnce([]);
+    const ctx = makeCtx('/events 5');
+    await makeCmd()(ctx);
+
+    expect(eventRepo.getEvents).toHaveBeenCalledTimes(1);
+    expect(eventRepo.getEventById).not.toHaveBeenCalled();
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Helpers for the /events show-path tests
 // ---------------------------------------------------------------------------

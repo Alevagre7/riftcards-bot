@@ -178,11 +178,18 @@ export async function renderEventDetail(
     ...(isStarted !== undefined ? { isStarted } : {}),
   });
 
-  // Always edit in place (called from a callback)
-  await ctx.editMessageText(result.body, {
-    parse_mode: 'HTML',
+  const sendOptions = {
+    parse_mode: 'HTML' as const,
     reply_markup: { inline_keyboard: result.buttons },
-  });
+  };
+  // When invoked from a callback query, edit in place. When invoked
+  // from a plain command (e.g. /events 498515), reply with a new
+  // message — editMessageText requires a callback message to edit.
+  if (ctx.callbackQuery && ctx.callbackQuery.message) {
+    await ctx.editMessageText(result.body, sendOptions);
+  } else {
+    await ctx.reply(result.body, sendOptions);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -247,7 +254,12 @@ export async function renderEventsPage(
 // Subcommand parser
 // ---------------------------------------------------------------------------
 
-type EventsAction = 'show' | 'set' | 'clear' | 'unwatch' | 'usage';
+type EventsAction = 'show' | 'set' | 'clear' | 'unwatch' | 'usage' | 'event-id';
+
+// EVENT_ID_THRESHOLD disambiguates `/events <N>` between a days
+// window (small N) and a direct event lookup (large N). V2 event
+// ids are 6-digit; a days window past 1000 days is nonsensical.
+const EVENT_ID_THRESHOLD = 1000;
 
 function parseAction(rawArgs: string): EventsAction {
   const arg = rawArgs.trim().toLowerCase();
@@ -255,8 +267,14 @@ function parseAction(rawArgs: string): EventsAction {
   if (arg === 'set' || arg.startsWith('set ')) return 'set';
   if (arg === 'clear') return 'clear';
   if (arg === 'unwatch') return 'unwatch';
-  // Numeric arg (e.g. /events 14) → show with that many days.
-  if (/^\d+$/.test(arg)) return 'show';
+  // Locator URL → direct event lookup (debug path).
+  if (/^https?:\/\/locator\.riftbound\.uvsgames\.com\/events\/\d+/.test(arg)) {
+    return 'event-id';
+  }
+  // Numeric arg: large (>= EVENT_ID_THRESHOLD) = event id, small = days.
+  if (/^\d+$/.test(arg)) {
+    return Number(arg) >= EVENT_ID_THRESHOLD ? 'event-id' : 'show';
+  }
   return 'usage';
 }
 // parseCoords: accept "<lat>, <lon>" with optional whitespace and
@@ -287,10 +305,25 @@ export function createEventsCommand(deps: EventsCommandDeps) {
         'Usage:\n' +
           '/events \u2014 upcoming events at your location (default 7 days)\n' +
           '/events &lt;N&gt; \u2014 upcoming events in the next N days\n' +
+          '/events &lt;id&gt; \u2014 show a specific event by id (debug)\n' +
+          '/events &lt;locator-url&gt; \u2014 show the event at that locator link\n' +
           '/events set \u2014 share your location (or use the Share button)\n' +
           '/events clear \u2014 forget your saved location\n' +
           '/events unwatch \u2014 stop watching the current event',
       );
+      return;
+    }
+
+    if (action === 'event-id') {
+      const trimmed = rawArgs.trim();
+      const id = /^\d+$/.test(trimmed)
+        ? Number(trimmed)
+        : Number(trimmed.match(/\/events\/(\d+)/)?.[1] ?? '0') || null;
+      if (id == null) {
+        await ctx.reply('Could not read the event id. Use a bare number or a locator URL.');
+        return;
+      }
+      await renderEventDetail(ctx, deps, id);
       return;
     }
 
