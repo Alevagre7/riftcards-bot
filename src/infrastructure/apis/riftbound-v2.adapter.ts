@@ -527,7 +527,7 @@ export class RiftboundV2Adapter implements IEventRepository {
       const [matches, standingRows] = await Promise.all([
         this.fetchPaginated(
           `/tournament-rounds/${currentRound.id}/matches/paginated/`,
-          new URLSearchParams({ page_size: '10', avoid_cache: 'false' }),
+          new URLSearchParams({ page_size: '10', avoid_cache: 'true' }),
           MatchesResponseSchema,
         ),
         this.fetchPaginated(
@@ -560,7 +560,7 @@ export class RiftboundV2Adapter implements IEventRepository {
     // from the event detail's tournament_phases.
     const matches = await this.fetchPaginated(
       `/tournament-rounds/${roundId}/matches/paginated/`,
-      new URLSearchParams({ page_size: '10', avoid_cache: 'false' }),
+      new URLSearchParams({ page_size: '10', avoid_cache: 'true' }),
       MatchesResponseSchema,
     );
     return matches.filter((m) => !m.match_is_bye).map(mapV2MatchToPairing);
