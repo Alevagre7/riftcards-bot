@@ -68,17 +68,41 @@ export function createEventActionHandler(deps: EventActionDeps) {
       return;
     }
 
-    // Leaderboard view
+    // Leaderboard view (current round)
     const leaderboardMatch = /^event:(\d+):leaderboard$/.exec(data);
     if (leaderboardMatch) {
       await handleLeaderboard(ctx, deps, parseInt(leaderboardMatch[1]!, 10));
       return;
     }
 
-    // All tables / rounds view
+    // Leaderboard for a specific round (←/→ round nav)
+    const leaderboardRoundMatch = /^event:(\d+):leaderboard:round:(\d+)$/.exec(data);
+    if (leaderboardRoundMatch) {
+      await handleLeaderboard(
+        ctx,
+        deps,
+        parseInt(leaderboardRoundMatch[1]!, 10),
+        parseInt(leaderboardRoundMatch[2]!, 10),
+      );
+      return;
+    }
+
+    // All tables / rounds view (current round)
     const roundsMatch = /^event:(\d+):rounds$/.exec(data);
     if (roundsMatch) {
       await handleRounds(ctx, deps, parseInt(roundsMatch[1]!, 10));
+      return;
+    }
+
+    // All tables for a specific round (←/→ round nav)
+    const roundsRoundMatch = /^event:(\d+):rounds:round:(\d+)$/.exec(data);
+    if (roundsRoundMatch) {
+      await handleRounds(
+        ctx,
+        deps,
+        parseInt(roundsRoundMatch[1]!, 10),
+        parseInt(roundsRoundMatch[2]!, 10),
+      );
       return;
     }
 
@@ -115,27 +139,89 @@ export function createEventActionHandler(deps: EventActionDeps) {
 }
 
 // ---------------------------------------------------------------------------
+// Round view helpers (←/→ round nav + ← Back to event)
+// ---------------------------------------------------------------------------
+
+// Compose the full keyboard for a leaderboard / all-tables view. The
+// layout is: an optional round-nav row, then a Back-to-event row.
+// Hoisted so the handlers below can reference it.
+function composeRoundViewKeyboard(
+  allRounds: readonly EventRoundSummary[],
+  displayedRoundNumber: number | null,
+  eventId: number,
+  kind: 'leaderboard' | 'rounds',
+): InlineKeyboardButton[][] {
+  const keyboard: InlineKeyboardButton[][] = [];
+  if (displayedRoundNumber != null) {
+    const nav = buildRoundNavRow(allRounds, displayedRoundNumber, eventId, kind);
+    if (nav.length > 0) keyboard.push(nav);
+  }
+  keyboard.push([{ text: '\u2190 Back to event', callback_data: `event:${eventId}` }]);
+  return keyboard;
+}
+
+function buildRoundNavRow(
+  allRounds: readonly EventRoundSummary[],
+  currentRoundNumber: number,
+  eventId: number,
+  kind: 'leaderboard' | 'rounds',
+): InlineKeyboardButton[] {
+  const sorted = [...allRounds].sort((a, b) => a.roundNumber - b.roundNumber);
+  const idx = sorted.findIndex((r) => r.roundNumber === currentRoundNumber);
+  if (idx === -1) return [];
+  const row: InlineKeyboardButton[] = [];
+  if (idx > 0) {
+    const prev = sorted[idx - 1]!;
+    row.push({
+      text: `\u2190 Round ${prev.roundNumber}`,
+      callback_data: `event:${eventId}:${kind}:round:${prev.roundNumber}`,
+    });
+  }
+  if (idx < sorted.length - 1) {
+    const next = sorted[idx + 1]!;
+    row.push({
+      text: `Round ${next.roundNumber} \u2192`,
+      callback_data: `event:${eventId}:${kind}:round:${next.roundNumber}`,
+    });
+  }
+  return row;
+}
+
+// ---------------------------------------------------------------------------
 // Leaderboard
 // ---------------------------------------------------------------------------
 
-async function handleLeaderboard(ctx: Context, deps: EventActionDeps, eventId: number): Promise<void> {
+async function handleLeaderboard(
+  ctx: Context,
+  deps: EventActionDeps,
+  eventId: number,
+  roundNumber?: number,
+): Promise<void> {
   const data = await deps.eventRepository.getEventDetail(eventId, deps.defaultLocation);
-  if (!data) {
-    await ctx.answerCbQuery('Event data not available.');
-    return;
+  if (!data) { await ctx.answerCbQuery('Event data not available.'); return; }
+  const allRounds = data.event.tournamentPhases.flatMap((p) => p.rounds);
+  let displayedRoundNumber: number | null;
+  let standings: readonly EventStanding[];
+  if (roundNumber != null) {
+    const round = allRounds.find((r) => r.roundNumber === roundNumber);
+    if (!round) { await ctx.answerCbQuery('Round not found.'); return; }
+    displayedRoundNumber = round.roundNumber;
+    standings = await deps.eventRepository.getEventStandings(round.id);
+  } else {
+    displayedRoundNumber = data.currentRound?.roundNumber ?? null;
+    standings = data.standings;
   }
   const body = formatEventLeaderboard({
     name: data.event.name,
-    currentRound: data.currentRound == null ? null : data.currentRound.roundNumber,
-    standings: data.standings,
+    currentRound: displayedRoundNumber,
+    standings,
   });
+  const keyboard = composeRoundViewKeyboard(
+    allRounds, displayedRoundNumber, eventId, 'leaderboard',
+  );
   await ctx.editMessageText(body, {
     parse_mode: 'HTML',
-    reply_markup: {
-      inline_keyboard: [[
-        { text: '\u2190 Back to event', callback_data: `event:${eventId}` },
-      ]],
-    },
+    reply_markup: { inline_keyboard: keyboard },
   });
 }
 
@@ -143,24 +229,40 @@ async function handleLeaderboard(ctx: Context, deps: EventActionDeps, eventId: n
 // Rounds
 // ---------------------------------------------------------------------------
 
-async function handleRounds(ctx: Context, deps: EventActionDeps, eventId: number): Promise<void> {
+async function handleRounds(
+  ctx: Context,
+  deps: EventActionDeps,
+  eventId: number,
+  roundNumber?: number,
+): Promise<void> {
   const data = await deps.eventRepository.getEventDetail(eventId, deps.defaultLocation);
-  if (!data) {
-    await ctx.answerCbQuery('Event data not available.');
-    return;
+  if (!data) { await ctx.answerCbQuery('Event data not available.'); return; }
+  const allRounds = data.event.tournamentPhases.flatMap((p) => p.rounds);
+  let displayedRound: EventRoundSummary | null;
+  let displayedRoundNumber: number | null;
+  let pairings: readonly EventPairing[];
+  if (roundNumber != null) {
+    const round = allRounds.find((r) => r.roundNumber === roundNumber);
+    if (!round) { await ctx.answerCbQuery('Round not found.'); return; }
+    displayedRound = round;
+    displayedRoundNumber = round.roundNumber;
+    pairings = await deps.eventRepository.getEventMatches(round.id);
+  } else {
+    displayedRound = data.currentRound;
+    displayedRoundNumber = data.currentRound?.roundNumber ?? null;
+    pairings = data.pairings;
   }
   const body = formatEventRounds({
     name: data.event.name,
-    currentRound: data.currentRound,
-    pairings: data.pairings,
+    currentRound: displayedRound,
+    pairings,
   });
+  const keyboard = composeRoundViewKeyboard(
+    allRounds, displayedRoundNumber, eventId, 'rounds',
+  );
   await ctx.editMessageText(body, {
     parse_mode: 'HTML',
-    reply_markup: {
-      inline_keyboard: [[
-        { text: '\u2190 Back to event', callback_data: `event:${eventId}` },
-      ]],
-    },
+    reply_markup: { inline_keyboard: keyboard },
   });
 }
 
