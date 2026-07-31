@@ -207,4 +207,13 @@ describe('formatEventDetail', () => {
     );
     expect(watchBtn?.callback_data).toBe('event:42:watch:start');
   });
+
+  it('omits "Back to list" when showBackToList is false (event-id path)', () => {
+    const result = formatEventDetail(baseEvent, [], { showBackToList: false });
+    const texts = result.buttons.flat().map((b) => b.text);
+    expect(texts).not.toContain('\u2190 Back to list');
+    // Other buttons still present
+    expect(texts).toContain('\uD83C\uDFC6 Leaderboard');
+    expect(texts).toContain('\uD83D\uDCCB All tables');
+  });
 });

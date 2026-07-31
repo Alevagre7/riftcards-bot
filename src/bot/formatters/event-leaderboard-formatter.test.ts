@@ -23,7 +23,7 @@ describe('formatEventLeaderboard', () => {
       standings: [],
     });
     expect(out).toContain('Test Event');
-    expect(out).toContain('Round 3');
+    expect(out).toContain('<b>3</b>');
   });
 
   it('shows question mark when currentRound is null', () => {
@@ -32,7 +32,7 @@ describe('formatEventLeaderboard', () => {
       currentRound: null,
       standings: [],
     });
-    expect(out).toContain('Round ?');
+    expect(out).toContain('<b>?</b>');
   });
 
   it('renders standings rows with rank, name, and W-L', () => {
@@ -46,9 +46,9 @@ describe('formatEventLeaderboard', () => {
       ],
     });
 
-    expect(out).toContain('\uD83E\uDD47 <b>Alice</b> (3-1)');
-    expect(out).toContain('\uD83E\uDD48 <b>Bob</b> (2-2)');
-    expect(out).toContain('\uD83E\uDD49 <b>Charlie</b> (1-3)');
+    expect(out).toContain('\uD83E\uDD47 <b>Alice</b> \u2014 <b>3-1</b> \u00B7 <i>9 pts</i>');
+    expect(out).toContain('\uD83E\uDD48 <b>Bob</b> \u2014 <b>2-2</b> \u00B7 <i>9 pts</i>');
+    expect(out).toContain('\uD83E\uDD49 <b>Charlie</b> \u2014 <b>1-3</b> \u00B7 <i>9 pts</i>');
   });
 
   it('shows "No standings available yet" when standings is empty', () => {

@@ -127,7 +127,14 @@ async function handleLeaderboard(ctx: Context, deps: EventActionDeps, eventId: n
     currentRound: data.currentRound == null ? null : data.currentRound.roundNumber,
     standings: data.standings,
   });
-  await ctx.editMessageText(body, { parse_mode: 'HTML' });
+  await ctx.editMessageText(body, {
+    parse_mode: 'HTML',
+    reply_markup: {
+      inline_keyboard: [[
+        { text: '\u2190 Back to event', callback_data: `event:${eventId}` },
+      ]],
+    },
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -145,7 +152,14 @@ async function handleRounds(ctx: Context, deps: EventActionDeps, eventId: number
     currentRound: data.currentRound,
     pairings: data.pairings,
   });
-  await ctx.editMessageText(body, { parse_mode: 'HTML' });
+  await ctx.editMessageText(body, {
+    parse_mode: 'HTML',
+    reply_markup: {
+      inline_keyboard: [[
+        { text: '\u2190 Back to event', callback_data: `event:${eventId}` },
+      ]],
+    },
+  });
 }
 
 // ---------------------------------------------------------------------------

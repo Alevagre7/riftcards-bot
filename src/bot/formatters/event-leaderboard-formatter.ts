@@ -23,18 +23,18 @@ export function formatEventLeaderboard(data: LeaderboardData): string {
   const lines: string[] = [];
 
   lines.push(
-    `\uD83C\uDFC6 <b>${escapeHtml(data.name)}</b> \u2014 Round ${data.currentRound ?? '?'}`,
+    `\uD83C\uDFC6 <b>${escapeHtml(data.name)}</b> \u2014 Round <b>${data.currentRound ?? '?'}</b>`,
   );
   lines.push('');
 
   if (data.standings.length === 0) {
-    lines.push('No standings available yet.');
+    lines.push('\uD83E\uDD37 No standings available yet.');
     return lines.join('\n');
   }
 
   for (const entry of data.standings) {
     lines.push(
-      `${rankLabel(entry.rank)} <b>${escapeHtml(entry.name)}</b> (${entry.wins}-${entry.losses})`,
+      `${rankLabel(entry.rank)} <b>${escapeHtml(entry.name)}</b> \u2014 <b>${entry.wins}-${entry.losses}</b> \u00B7 <i>${entry.matchPoints} pts</i>`,
     );
   }
 

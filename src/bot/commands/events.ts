@@ -143,6 +143,7 @@ export async function renderEventDetail(
   ctx: Context,
   deps: EventsCommandDeps,
   id: number,
+  options?: { showBackToList?: boolean },
 ): Promise<void> {
   await ctx.sendChatAction('typing');
 
@@ -176,6 +177,7 @@ export async function renderEventDetail(
   const result = formatEventDetail(event, registrations, {
     privateChat: ctx.chat?.type === 'private',
     ...(isStarted !== undefined ? { isStarted } : {}),
+    ...(options?.showBackToList === false ? { showBackToList: false } : {}),
   });
 
   const sendOptions = {
@@ -323,7 +325,7 @@ export function createEventsCommand(deps: EventsCommandDeps) {
         await ctx.reply('Could not read the event id. Use a bare number or a locator URL.');
         return;
       }
-      await renderEventDetail(ctx, deps, id);
+      await renderEventDetail(ctx, deps, id, { showBackToList: false });
       return;
     }
 

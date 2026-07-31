@@ -40,7 +40,7 @@ function statusChip(displayStatus: Event['displayStatus']): string {
 export function formatEventDetail(
   event: Event,
   registrations: readonly EventRegistration[] | 'unavailable',
-  options?: { privateChat?: boolean; isStarted?: boolean },
+  options?: { privateChat?: boolean; isStarted?: boolean; showBackToList?: boolean },
 ): EventDetailResult {
   const tz = event.timezone || 'Europe/Madrid';
   const dateFmt = new Intl.DateTimeFormat('en-GB', {
@@ -144,7 +144,12 @@ export function formatEventDetail(
     buttons.push([{ text: '\uD83D\uDC41 Watch', callback_data: `event:${event.id}:watch:start` }]);
   }
 
-  buttons.push([{ text: '\u2190 Back to list', callback_data: 'event:list' }]);
+  // "Back to list" makes no sense when the user opened the detail
+  // from /events <id> or a locator URL — there is no list to go back
+  // to. The event-id command path passes showBackToList: false.
+  if (options?.showBackToList !== false) {
+    buttons.push([{ text: '\u2190 Back to list', callback_data: 'event:list' }]);
+  }
 
   return {
     body: lines.join('\n'),
