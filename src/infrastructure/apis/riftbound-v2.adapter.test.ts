@@ -163,6 +163,77 @@ describe('RiftboundV2Adapter.getEvents', () => {
     expect(ev.costInCents).toBe(0);
     expect(ev.tournamentPhases).toHaveLength(1);
   });
+
+  it('coerces null event_format / timezone / display_status to the entity contract', async () => {
+    const list = loadFixture('v2-events-list.json') as {
+      results: Array<Record<string, unknown>>;
+    };
+    const modified = {
+      ...list,
+      results: [
+        { ...list.results[0]!, event_format: null, timezone: null },
+        // Unknown status value — must degrade, not throw.
+        { ...list.results[1]!, display_status: 'cancelled' },
+      ],
+    };
+    fetchSpy.mockResolvedValue(jsonResponse(modified));
+
+    const events = await adapter.getEvents(
+      new Date('2026-07-30T00:00:00.000Z'),
+      new Date('2026-08-06T00:00:00.000Z'),
+      baseLocation,
+    );
+
+    expect(events).toHaveLength(2);
+    expect(events[0]!.eventFormat).toBe('');
+    expect(events[0]!.timezone).toBe('');
+    expect(events[1]!.displayStatus).toBe('upcoming');
+  });
+});
+
+describe('RiftboundV2Adapter.getEvents pagination', () => {
+  let fetchSpy: ReturnType<typeof vi.fn>;
+  let adapter: RiftboundV2Adapter;
+  beforeEach(() => {
+    fetchSpy = vi.fn();
+    vi.stubGlobal('fetch', fetchSpy);
+    adapter = makeAdapter();
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('follows next_page_number until exhausted and concatenates results', async () => {
+    const oneEvent = (id: number) => ({
+      id, name: `Event ${id}`, display_status: 'upcoming',
+      event_status: 'SCHEDULED', start_datetime: '2026-08-01T18:00:00+00:00',
+      end_datetime: '2026-08-01T22:00:00+00:00', timezone: 'Europe/Madrid',
+      capacity: 8, registered_user_count: 0, starting_player_count: 0,
+      store: { id: 1, name: 'S', full_address: '', latitude: 0, longitude: 0,
+        timezone: null, country: null, administrative_area_level_1_short: null },
+      gameplay_format: { id: 'f', name: 'F' },
+      full_header_image_url: null, queue_status: '', event_type: '',
+      event_format: '', description: '', cost_in_cents: 0, currency: '',
+      is_on_demand: false, is_test_event: false, tournament_phases: [],
+    });
+    const page1 = { count: 2, next_page_number: 2, results: [oneEvent(1)] };
+    const page2 = { count: 2, next_page_number: null, results: [oneEvent(2)] };
+    fetchSpy.mockResolvedValueOnce(jsonResponse(page1));
+    fetchSpy.mockResolvedValueOnce(jsonResponse(page2));
+
+    const events = await adapter.getEvents(
+      new Date('2026-07-30T00:00:00.000Z'),
+      new Date('2026-08-06T00:00:00.000Z'),
+      baseLocation,
+    );
+
+    expect(events.map((e) => e.id)).toEqual([1, 2]);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    const url1 = new URL(fetchSpy.mock.calls[0]![0] as string);
+    const url2 = new URL(fetchSpy.mock.calls[1]![0] as string);
+    expect(url1.searchParams.get('page')).toBe('1');
+    expect(url2.searchParams.get('page')).toBe('2');
+  });
 });
 
 describe('RiftboundV2Adapter.getEventById', () => {

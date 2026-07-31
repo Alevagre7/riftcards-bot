@@ -27,7 +27,7 @@ import { fetchWithRetry } from '../../utils/api-client.js';
 const StoreSchema = z.object({
   id: z.number(),
   name: z.string(),
-  full_address: z.string(),
+  full_address: z.string().nullable().transform((v) => v ?? ''),
   latitude: z.number(),
   longitude: z.number(),
   timezone: z.string().nullable().default(null),
@@ -59,23 +59,28 @@ const PhaseSchema = z.object({
 const EventListItemSchema = z.object({
   id: z.number(),
   name: z.string(),
-  display_status: z.enum(['upcoming', 'inProgress', 'complete']).default('upcoming'),
-  event_status: z.string(),
+  // Unknown future statuses degrade to 'upcoming' instead of breaking
+  // the whole list (the upstream has shipped new values before).
+  display_status: z.enum(['upcoming', 'inProgress', 'complete']).catch('upcoming'),
+  // The upstream emits nulls for several string fields on real events
+  // (verified: event_format null in 77/132 US events, timezone null in
+  // 4/132); the entity models them as non-null strings, so coerce.
+  event_status: z.string().nullable().transform((v) => v ?? ''),
   start_datetime: z.string(),
   end_datetime: z.string(),
-  timezone: z.string(),
+  timezone: z.string().nullable().transform((v) => v ?? ''),
   capacity: z.number(),
   registered_user_count: z.number(),
   starting_player_count: z.number(),
   store: StoreSchema,
   gameplay_format: GameplayFormatSchema,
   full_header_image_url: z.string().nullable().default(null),
-  queue_status: z.string(),
-  event_type: z.string(),
-  event_format: z.string(),
-  description: z.string(),
+  queue_status: z.string().nullable().transform((v) => v ?? ''),
+  event_type: z.string().nullable().transform((v) => v ?? ''),
+  event_format: z.string().nullable().transform((v) => v ?? ''),
+  description: z.string().nullable().transform((v) => v ?? ''),
   cost_in_cents: z.number().nullable().default(null),
-  currency: z.string(),
+  currency: z.string().nullable().transform((v) => v ?? ''),
   is_on_demand: z.boolean(),
   is_test_event: z.boolean(),
   tournament_phases: z.array(PhaseSchema).default([]),
@@ -458,11 +463,12 @@ export class RiftboundV2Adapter implements IEventRepository {
     params.set('upcoming_only', 'false');
     params.set('page_size', '25');
 
-    const { status, json } = await this.request('/events/', params);
-    if (status !== 200) throw new ApiResponseError('Riftbound V2', status);
-
-    const parsed = this.parse(EventListResponseSchema, json);
-    return parsed.results.map(mapV2EventToEvent);
+    const items = await this.fetchPaginated(
+      '/events/',
+      params,
+      EventListResponseSchema,
+    );
+    return items.map(mapV2EventToEvent);
   }
 
   async getEventById(
