@@ -10,6 +10,7 @@ import { renderEventList, renderEventDetail, renderEventsPage } from '../command
 import { formatEventLeaderboard } from '../formatters/event-leaderboard-formatter.js';
 import { formatEventRounds } from '../formatters/event-rounds-formatter.js';
 import { eventsPaginationState } from '../state/events-pagination-state.js';
+import { escapeHtml } from '../formatters/card-formatter.js';
 
 interface EventActionDeps {
   eventRepository: IEventRepository;
@@ -200,16 +201,39 @@ async function handleLeaderboard(
   const data = await deps.eventRepository.getEventDetail(eventId, deps.defaultLocation);
   if (!data) { await ctx.answerCbQuery('Event data not available.'); return; }
   const allRounds = data.event.tournamentPhases.flatMap((p) => p.rounds);
-  let displayedRoundNumber: number | null;
-  let standings: readonly EventStanding[];
+  let displayedRoundNumber: number | null = null;
+  let standings: readonly EventStanding[] = [];
   if (roundNumber != null) {
     const round = allRounds.find((r) => r.roundNumber === roundNumber);
     if (!round) { await ctx.answerCbQuery('Round not found.'); return; }
     displayedRoundNumber = round.roundNumber;
     standings = await deps.eventRepository.getEventStandings(round.id);
   } else {
-    displayedRoundNumber = data.currentRound?.roundNumber ?? null;
-    standings = data.standings;
+    // Default view: the latest round that actually has standings
+    // data. The current round often has none (standings are only
+    // generated once the round completes or results land), which
+    // previously rendered an empty leaderboard.
+    const sorted = [...allRounds].sort((a, b) => b.roundNumber - a.roundNumber);
+    const startIdx = data.currentRound != null
+      ? Math.max(0, sorted.findIndex((r) => r.id === data.currentRound!.id))
+      : 0;
+    let found = false;
+    for (let i = startIdx; i < sorted.length; i++) {
+      const round = sorted[i]!;
+      const rows = round.id === data.currentRound?.id
+        ? data.standings
+        : await deps.eventRepository.getEventStandings(round.id);
+      if (rows.length > 0) {
+        displayedRoundNumber = round.roundNumber;
+        standings = rows;
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      displayedRoundNumber = data.currentRound?.roundNumber ?? null;
+      standings = data.standings;
+    }
   }
   const body = formatEventLeaderboard({
     name: data.event.name,
@@ -371,8 +395,8 @@ async function handleWatchSelect(
   });
 
   await ctx.editMessageText(
-    `\uD83D\uDCE1 I'll DM you when your next pairing appears. Use /events unwatch to stop.`,
-    { reply_markup: { inline_keyboard: [] } },
+    `\uD83D\uDCE1 Watching <b>${escapeHtml(rosterEntry.name)}</b> \u2014 I'll DM you when their next pairing appears. Use /events unwatch to stop.`,
+    { parse_mode: 'HTML', reply_markup: { inline_keyboard: [] } },
   );
 }
 

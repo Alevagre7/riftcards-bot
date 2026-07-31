@@ -174,10 +174,15 @@ export async function renderEventDetail(
     // Detail failure → isStarted stays undefined (show everything)
   }
 
+  // Default: show "Back to list" only when the user actually has a
+  // list context (eventsPaginationState is set by renderEventList).
+  // An event fetched by id/URL clears that state, so the button stays
+  // hidden even after detail → leaderboard → back-to-event round trips.
+  const showBackToList = options?.showBackToList ?? (userId != null && eventsPaginationState.get(userId) != null);
   const result = formatEventDetail(event, registrations, {
     privateChat: ctx.chat?.type === 'private',
     ...(isStarted !== undefined ? { isStarted } : {}),
-    ...(options?.showBackToList === false ? { showBackToList: false } : {}),
+    ...(showBackToList === false ? { showBackToList: false } : {}),
   });
 
   const sendOptions = {
@@ -324,6 +329,14 @@ export function createEventsCommand(deps: EventsCommandDeps) {
       if (id == null) {
         await ctx.reply('Could not read the event id. Use a bare number or a locator URL.');
         return;
+      }
+      // No list context exists for an id/URL fetch: clear any stale
+      // list state so the detail page (and callbacks that re-render
+      // it, e.g. leaderboard → back-to-event) keep hiding "Back to
+      // list".
+      const userId = ctx.from?.id;
+      if (userId != null) {
+        eventsPaginationState.clear(userId);
       }
       await renderEventDetail(ctx, deps, id, { showBackToList: false });
       return;

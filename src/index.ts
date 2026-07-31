@@ -178,6 +178,14 @@ async function main() {
     }),
   );
 
+  // Start the background watcher BEFORE launch: telegraf's launch()
+  // awaits the long-polling loop, which never resolves, so anything
+  // after `await bot.launch()` never runs. The watcher was silently
+  // never starting — the root cause of "watch not notifying".
+  if (config.nexusWatcherEnabled) {
+    eventWatcher.start();
+  }
+
   if (config.webhookUrl) {
     await bot.launch({
       webhook: {
@@ -189,10 +197,6 @@ async function main() {
   } else {
     await bot.launch();
     console.log('Bot running in polling mode');
-  }
-
-  if (config.nexusWatcherEnabled) {
-    eventWatcher.start();
   }
 }
 

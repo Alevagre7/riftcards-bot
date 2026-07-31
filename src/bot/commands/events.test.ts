@@ -521,4 +521,73 @@ describe('createEventActionHandler — event:list back-to-list fix', () => {
     const delta = startBefore.getTime() - startAfter.getTime();
     expect(delta).toBe(7 * 24 * 60 * 60 * 1000 + 12 * 60 * 60 * 1000);
   });
+
+  it('hides Back to list on event:<id> callback re-render when the user fetched by id/URL (no list state)', async () => {
+    // Pre-condition: the /events <id> path cleared the list state.
+    eventsPaginationState.clear(TEST_USER_ID);
+    (eventRepo.getEventById as Mock).mockResolvedValueOnce(baseEvent({ id: 498515 }));
+    (eventRepo.getEventRegistrations as Mock).mockResolvedValueOnce([]);
+    // A started event: isStarted true → Leaderboard/All tables shown.
+    (eventRepo.getEventDetail as Mock).mockResolvedValueOnce({
+      currentRound: { id: 9, roundNumber: 1, status: 'IN_PROGRESS' },
+    });
+
+    const editMessageText = vi.fn().mockResolvedValue(undefined);
+    const ctx = makeCallbackCtx('event:498515');
+    // Detail render edits in place because makeCallbackCtx carries a
+    // callbackQuery.message.
+    (ctx as unknown as { editMessageText: Mock }).editMessageText = editMessageText;
+    await makeHandler(7)(ctx);
+
+    expect(editMessageText).toHaveBeenCalled();
+    const call = editMessageText.mock.calls[0] as [string, { reply_markup?: { inline_keyboard: { text: string }[][] } }];
+    const texts = (call[1]?.reply_markup?.inline_keyboard ?? []).flat().map((b) => b.text);
+    expect(texts).not.toContain('\u2190 Back to list');
+    expect(texts).toContain('\uD83C\uDFC6 Leaderboard');
+  });
+
+  it('shows Back to list on event:<id> callback re-render when the user has a list context', async () => {
+    eventsPaginationState.set(TEST_USER_ID, [baseEvent({ id: 498515 })], 7);
+    (eventRepo.getEventById as Mock).mockResolvedValueOnce(baseEvent({ id: 498515 }));
+    (eventRepo.getEventRegistrations as Mock).mockResolvedValueOnce([]);
+
+    const editMessageText = vi.fn().mockResolvedValue(undefined);
+    const ctx = makeCallbackCtx('event:498515');
+    (ctx as unknown as { editMessageText: Mock }).editMessageText = editMessageText;
+    await makeHandler(7)(ctx);
+
+    const call = editMessageText.mock.calls[0] as [string, { reply_markup?: { inline_keyboard: { text: string }[][] } }];
+    const texts = (call[1]?.reply_markup?.inline_keyboard ?? []).flat().map((b) => b.text);
+    expect(texts).toContain('\u2190 Back to list');
+  });
+
+  it('leaderboard falls back to the latest round that has standings data', async () => {
+    const round1 = { id: 1, roundNumber: 1, status: 'COMPLETE' as const, pairingsStatus: 'GENERATED', standingsStatus: 'GENERATED' };
+    const round2 = { id: 2, roundNumber: 2, status: 'IN_PROGRESS' as const, pairingsStatus: 'GENERATED', standingsStatus: 'NOT_GENERATED' };
+    const detail = {
+      event: {
+        ...baseEvent({ id: 498515 }),
+        tournamentPhases: [{ id: 1, status: 'IN_PROGRESS' as const, orderInPhases: 1, phaseName: 'P', rounds: [round1, round2] }],
+      },
+      currentRound: round2,
+      registrations: [],
+      pairings: [],
+      standings: [], // current round has no standings yet
+      fetchedAt: '2026-08-01T00:00:00Z',
+    };
+    (eventRepo.getEventDetail as Mock).mockResolvedValueOnce(detail);
+    (eventRepo.getEventStandings as Mock).mockResolvedValueOnce([
+      { rank: 1, name: 'Alice', wins: 1, losses: 0, draws: 0, matchPoints: 3, matchRecord: '1-0-0' },
+    ]);
+
+    const editMessageText = vi.fn().mockResolvedValue(undefined);
+    const ctx = makeCallbackCtx('event:498515:leaderboard');
+    (ctx as unknown as { editMessageText: Mock }).editMessageText = editMessageText;
+    await makeHandler(7)(ctx);
+
+    expect(eventRepo.getEventStandings).toHaveBeenCalledWith(1);
+    const call = editMessageText.mock.calls[0] as [string, unknown];
+    expect(String(call[0])).toContain('Round <b>1</b>');
+    expect(String(call[0])).toContain('<b>Alice</b>');
+  });
 });
