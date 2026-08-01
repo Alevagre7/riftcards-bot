@@ -6,6 +6,7 @@ import {
 } from './events.js';
 import { setupFlow } from '../state/setup-flow.js';
 import { eventsPaginationState } from '../state/events-pagination-state.js';
+import { eventDetailOrigin } from '../state/event-detail-origin.js';
 import { IUserSettingsRepository } from '../../core/ports/user-settings-repository.js';
 import { IEventRepository, EventLocation } from '../../core/ports/event-repository.js';
 import { Event } from '../../core/entities/event.js';
@@ -471,6 +472,7 @@ describe('createEventActionHandler — event:list back-to-list fix', () => {
     eventRepo = mockEventRepo();
     userSettings = mockUserSettingsRepo();
     eventsPaginationState.clear(TEST_USER_ID);
+    eventDetailOrigin.clearUser(TEST_USER_ID);
   });
 
   function makeHandler(defaultDaysAhead: number) {
@@ -546,6 +548,29 @@ describe('createEventActionHandler — event:list back-to-list fix', () => {
     expect(texts).toContain('\uD83C\uDFC6 Leaderboard');
   });
 
+  it('keeps Back to list hidden on direct-fetched events even after a stale list-state re-arm', async () => {
+    // Direct fetch marks the (user, event) origin (as the /events <id>
+    // path does); a stale "Back to list" tap re-arms the pagination
+    // state. The button must stay hidden for this direct-fetched event.
+    eventDetailOrigin.markDirect(TEST_USER_ID, 498515);
+    eventsPaginationState.set(TEST_USER_ID, [baseEvent({ id: 498515 })], 7);
+    (eventRepo.getEventById as Mock).mockResolvedValueOnce(baseEvent({ id: 498515 }));
+    (eventRepo.getEventRegistrations as Mock).mockResolvedValueOnce([]);
+    (eventRepo.getEventDetail as Mock).mockResolvedValueOnce({
+      currentRound: { id: 9, roundNumber: 1, status: 'IN_PROGRESS' },
+    });
+
+    const editMessageText = vi.fn().mockResolvedValue(undefined);
+    const ctx = makeCallbackCtx('event:498515');
+    (ctx as unknown as { editMessageText: Mock }).editMessageText = editMessageText;
+    await makeHandler(7)(ctx);
+
+    const call = editMessageText.mock.calls[0] as [string, { reply_markup?: { inline_keyboard: { text: string }[][] } }];
+    const texts = (call[1]?.reply_markup?.inline_keyboard ?? []).flat().map((b) => b.text);
+    expect(texts).not.toContain('\u2190 Back to list');
+    expect(texts).toContain('\uD83C\uDFC6 Leaderboard');
+  });
+
   it('shows Back to list on event:<id> callback re-render when the user has a list context', async () => {
     eventsPaginationState.set(TEST_USER_ID, [baseEvent({ id: 498515 })], 7);
     (eventRepo.getEventById as Mock).mockResolvedValueOnce(baseEvent({ id: 498515 }));
@@ -589,5 +614,26 @@ describe('createEventActionHandler — event:list back-to-list fix', () => {
     const call = editMessageText.mock.calls[0] as [string, unknown];
     expect(String(call[0])).toContain('Round <b>1</b>');
     expect(String(call[0])).toContain('<b>Alice</b>');
+  });
+
+  it('shows Back to list for a different event opened from a list after a direct fetch', async () => {
+    // Direct-fetching event 498515 must not hide the button for event
+    // 800104 opened from a list: the origin is per (user, event).
+    eventDetailOrigin.markDirect(TEST_USER_ID, 498515);
+    eventsPaginationState.set(TEST_USER_ID, [baseEvent({ id: 800104 })], 7);
+    (eventRepo.getEventById as Mock).mockResolvedValueOnce(baseEvent({ id: 800104 }));
+    (eventRepo.getEventRegistrations as Mock).mockResolvedValueOnce([]);
+    (eventRepo.getEventDetail as Mock).mockResolvedValueOnce({
+      currentRound: { id: 9, roundNumber: 1, status: 'IN_PROGRESS' },
+    });
+
+    const editMessageText = vi.fn().mockResolvedValue(undefined);
+    const ctx = makeCallbackCtx('event:800104');
+    (ctx as unknown as { editMessageText: Mock }).editMessageText = editMessageText;
+    await makeHandler(7)(ctx);
+
+    const call = editMessageText.mock.calls[0] as [string, { reply_markup?: { inline_keyboard: { text: string }[][] } }];
+    const texts = (call[1]?.reply_markup?.inline_keyboard ?? []).flat().map((b) => b.text);
+    expect(texts).toContain('\u2190 Back to list');
   });
 });
