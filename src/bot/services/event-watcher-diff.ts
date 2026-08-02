@@ -67,23 +67,21 @@ export function detectPairingChange(
     reasons.push('opponent-changed');
   }
 
-  // result-submitted: prev null, now non-null.
-  if (prev.lastSeenResult === null && next.score1 !== null && next.score2 !== null) {
+  const nextResult = pairingToResult(next, username);
+
+  // result-submitted: prev null, now a known result.
+  if (prev.lastSeenResult === null && nextResult !== null) {
     reasons.push('result-submitted');
   }
 
-  // result-changed: both non-null and different. Compare from the
-  // watched user's POV (matches how lastSeenResult is stored); the
-  // raw scores are order-sensitive (player1 vs player2).
+  // result-changed: both known and different. Compare from the watched
+  // user's POV, which matches how lastSeenResult is stored.
   if (
     prev.lastSeenResult !== null &&
-    next.score1 !== null &&
-    next.score2 !== null
+    nextResult !== null &&
+    prev.lastSeenResult !== nextResult
   ) {
-    const newResult = scoresToResult(next.score1, next.score2, username, next);
-    if (prev.lastSeenResult !== newResult) {
-      reasons.push('result-changed');
-    }
+    reasons.push('result-changed');
   }
 
   return {
@@ -92,20 +90,28 @@ export function detectPairingChange(
   };
 }
 
-/** Convert a pairing's scores into a result label from the POV of
- *  the watched username. `pairing` identifies which side (player1/
- *  player2) the username is on so the label matches the format used
- *  when the watch snapshot is updated. */
-function scoresToResult(
-  score1: number,
-  score2: number,
+/** Convert an explicit pairing outcome into a result from the watched
+ * username's perspective. Unknown outcomes remain null so snapshots do
+ * not advance before the official result is reportable. */
+export function pairingToResult(
+  pairing: EventPairing,
   username: string,
-  pairing: { player1: string; player2: string },
-): 'win' | 'loss' | 'draw' | 'bye' {
-  if (score1 === score2) return 'draw';
-  const isPlayer1 = pairing.player1 === username;
-  const userScore = isPlayer1 ? score1 : score2;
-  const oppScore = isPlayer1 ? score2 : score1;
-  if (userScore > oppScore) return 'win';
-  return 'loss';
+): 'win' | 'loss' | 'draw' | 'bye' | null {
+  if (pairing.player1 !== username && pairing.player2 !== username) return null;
+  switch (pairing.outcome) {
+    case 'bye':
+      return 'bye';
+    case 'draw':
+      return 'draw';
+    case 'win':
+      if (pairing.winner === username) return 'win';
+      if (pairing.winner === pairing.player1 || pairing.winner === pairing.player2) return 'loss';
+      return null;
+    case 'loss':
+      return 'loss';
+    case 'pending':
+    case 'conflict':
+    case 'unavailable':
+      return null;
+  }
 }

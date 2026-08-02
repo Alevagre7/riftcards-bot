@@ -31,6 +31,7 @@ const configSchema = z.object({
   // when a user has not configured their own location via
   // /events set. See ADR-0006.
   riftboundV2BaseUrl: z.string().url().default('https://api.riftbound.uvsgames.com/api/v2'),
+  riftfoundBaseUrl: z.string().url().default('https://www.riftfound.com/api'),
   eventsLatitude: z.coerce.number().default(37.39),
   eventsLongitude: z.coerce.number().default(-5.99),
   eventsRadiusKm: z.coerce.number().default(80), // 50 miles
@@ -85,8 +86,8 @@ export function loadConfig(): Config {
     port: process.env['PORT'],
     webhookUrl: process.env['WEBHOOK_URL'],
     apiTimeoutMs: process.env['API_TIMEOUT_MS'],
-    apiRetryAttempts: process.env['API_RETRY_ATTEMPTS'],
     riftboundV2BaseUrl: process.env['RIFTBOUND_V2_BASE_URL'],
+    riftfoundBaseUrl: process.env['RIFTFOUND_BASE_URL'],
     eventsLatitude: process.env['EVENTS_LATITUDE'],
     eventsLongitude: process.env['EVENTS_LONGITUDE'],
     eventsRadiusKm: process.env['EVENTS_RADIUS_KM'],

@@ -139,8 +139,11 @@ export function formatEventDetail(
     );
   }
 
-  // Watch button only in private chats
-  if (options?.privateChat === true) {
+  // Watch is only useful while the event is upcoming or in progress.
+  if (
+    options?.privateChat === true &&
+    (event.displayStatus === 'upcoming' || event.displayStatus === 'inProgress')
+  ) {
     buttons.push([{ text: '\uD83D\uDC41 Watch', callback_data: `event:${event.id}:watch:start` }]);
   }
 

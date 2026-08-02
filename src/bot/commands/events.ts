@@ -1,6 +1,7 @@
 import { Context, Markup } from 'telegraf';
-import { Event } from '../../core/entities/event.js';
+import { EventListing } from '../../core/entities/event-listing.js';
 import { IEventRepository, EventLocation } from '../../core/ports/event-repository.js';
+import { IEventListingRepository } from '../../core/ports/event-listing-repository.js';
 import { IUserSettingsRepository } from '../../core/ports/user-settings-repository.js';
 import { IEventWatchRepository } from '../../core/ports/event-watch-repository.js';
 import { formatEventList } from '../formatters/event-list-formatter.js';
@@ -34,9 +35,9 @@ const IN_PROGRESS_LOOKBACK_HOURS = 12;
 // ---------------------------------------------------------------------------
 // Deps interface
 // ---------------------------------------------------------------------------
-
 export interface EventsCommandDeps {
   eventRepository: IEventRepository;
+  eventListingRepository: IEventListingRepository;
   userSettingsRepository: IUserSettingsRepository;
   // The global location fallback. When the user has not configured
   // their own location, the /events command uses this so the bot
@@ -95,7 +96,7 @@ export async function renderEventList(
   // upstream.
   const startAfter = new Date(now.getTime() - IN_PROGRESS_LOOKBACK_HOURS * 60 * 60 * 1000);
   const end = new Date(now.getTime() + days * 24 * 60 * 60 * 1000);
-  const rawEvents = await deps.eventRepository.getEvents(startAfter, end, location);
+  const rawEvents = await deps.eventListingRepository.getEvents(startAfter, end, location);
 
   // Post-filter: drop events whose end datetime is already in the past.
   // The upstream may return events that started within the lookback
@@ -214,7 +215,7 @@ export async function renderEventDetail(
 async function renderEventListWithPage(
   ctx: Context,
   deps: EventsCommandDeps,
-  sorted: readonly Event[],
+  sorted: readonly EventListing[],
   days: number,
   page: number,
 ): Promise<void> {

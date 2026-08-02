@@ -4,11 +4,14 @@ import { loadConfig } from './config.js';
 import { RiftapiAdapter } from './infrastructure/apis/riftapi.adapter.js';
 import { RiftcodexAdapter } from './infrastructure/apis/riftcodex.adapter.js';
 import { RiftboundV2Adapter } from './infrastructure/apis/riftbound-v2.adapter.js';
+import { RiftfoundEventsAdapter } from './infrastructure/apis/riftfound-events.adapter.js';
+import { FallbackEventListingRepository } from './infrastructure/apis/fallback-event-listing-repository.js';
 import { NexusTableAdapter } from './infrastructure/apis/nexus-table.adapter.js';
 import { INexusTableRepository } from './core/ports/nexus-table-repository.js';
 import { ICardRepository } from './core/ports/card-repository.js';
 import { IUserSettingsRepository } from './core/ports/user-settings-repository.js';
 import { EventLocation, IEventRepository } from './core/ports/event-repository.js';
+import { IEventListingRepository } from './core/ports/event-listing-repository.js';
 import { IEventWatchRepository } from './core/ports/event-watch-repository.js';
 import { errorHandler } from './bot/middleware/error-handler.js';
 import { createStartCommand } from './bot/commands/start.js';
@@ -52,15 +55,23 @@ function buildCardRepository(config: ReturnType<typeof loadConfig>): ICardReposi
 
 async function main() {
   const config = loadConfig();
-
   const cardRepository = buildCardRepository(config);
 
-  // Events repository: single upstream — the official V2 API
-  const eventRepository: IEventRepository = new RiftboundV2Adapter({
+  // Events: Riftfound is the primary list provider; official V2 remains
+  // authoritative for event detail and live tournament data.
+  const officialEventRepository = new RiftboundV2Adapter({
     baseUrl: config.riftboundV2BaseUrl,
     timeoutMs: config.apiTimeoutMs,
     retryAttempts: config.apiRetryAttempts,
   });
+  const riftfoundListingRepository = new RiftfoundEventsAdapter({
+    baseUrl: config.riftfoundBaseUrl,
+    timeoutMs: config.apiTimeoutMs,
+    retryAttempts: config.apiRetryAttempts,
+  });
+  const eventListingRepository: IEventListingRepository =
+    new FallbackEventListingRepository(riftfoundListingRepository, officialEventRepository);
+  const eventRepository: IEventRepository = officialEventRepository;
   const defaultLocation: EventLocation = {
     latitude: config.eventsLatitude,
     longitude: config.eventsLongitude,
@@ -134,6 +145,7 @@ async function main() {
     'events',
     createEventsCommand({
       eventRepository,
+      eventListingRepository,
       userSettingsRepository,
       defaultLocation,
       daysAhead: config.eventsDaysAhead,
@@ -172,6 +184,7 @@ async function main() {
       eventRepository,
       watchRepository: eventWatchRepository,
       userSettingsRepository,
+      eventListingRepository,
       defaultLocation,
       daysAhead: config.eventsDaysAhead,
       adminTelegramIds: config.adminTelegramIds,

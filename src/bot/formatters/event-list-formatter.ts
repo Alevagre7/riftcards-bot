@@ -1,4 +1,4 @@
-import { Event } from '../../core/entities/event.js';
+import { EventListing } from '../../core/entities/event-listing.js';
 
 const tz = 'Europe/Madrid';
 
@@ -8,34 +8,39 @@ const buttonDateFmt = new Intl.DateTimeFormat('en-GB', {
   timeZone: tz,
 });
 
-// Match eventType case-insensitively against the known V2 event type
-// substrings and return a colored circle emoji. The icons are part of
-// the button label only — never stored on the Event entity. Substring
-// match is intentional: defensive against upstream name tweaks
-// ("LOCALS" vs. "Pre-Release LOCALS"). Verified values from the V2
-// API: "LOCALS" and "CONVENTIONS".
-function eventTypeIcon(eventType: string): string {
-  const t = eventType.toLowerCase();
-  if (t.includes('locals')) return '\uD83D\uDD35';       // \U0001f535
-  if (t.includes('convention')) return '\uD83D\uDFE3';   // \U0001f7e3
-  return '\u26AA';                                        // ⚪
+function eventModeIcon(mode: EventListing['mode']): string {
+  switch (mode) {
+    case 'Skirmish':
+      return '🩷';
+    case 'Nexus Night':
+      return '🟣';
+    case 'Pre-Rift':
+      return '🟢';
+    case 'Other':
+      return '⚪';
+  }
 }
 
 const MAX_BUTTON_LABEL = 64;
 
-function makeButton(ev: Event): EventListButton {
-  const dayStr = buttonDateFmt.format(new Date(ev.startDatetime));
-  const parts = [
-    `${eventTypeIcon(ev.eventType)} ${dayStr}`,        // 🔵 Tue 21
-    ev.eventType || 'Event',
-    ev.store.name,
-    `${ev.registeredCount}/${ev.capacity}`,
-  ];
-  const full = parts.join(' · ');                          // " · "
-  const label = full.length <= MAX_BUTTON_LABEL
-    ? full
-    : full.slice(0, MAX_BUTTON_LABEL - 1) + '…';          // …
-  return { label, callbackData: `event:${ev.id}` };
+function makeButton(event: EventListing): EventListButton {
+  const dayStr = buttonDateFmt.format(new Date(event.startDatetime));
+  const prefix = `${eventModeIcon(event.mode)} ${dayStr}`;
+  const middle = `${event.mode} · ${event.storeName}`;
+  const suffix = ` · ${event.registeredCount}/${event.capacity}`;
+  const separator = ' \u00B7 ';
+  const remaining = MAX_BUTTON_LABEL - prefix.length - separator.length - suffix.length;
+  let label: string;
+  if (middle.length <= remaining) {
+    label = `${prefix}${separator}${middle}${suffix}`;
+  } else if (remaining > 0) {
+    const middleLimit = Math.max(0, remaining - 1);
+    label = `${prefix}${separator}${middle.slice(0, middleLimit)}\u2026${suffix}`;
+  } else {
+    const prefixLimit = Math.max(0, MAX_BUTTON_LABEL - suffix.length - 1);
+    label = `${prefix.slice(0, prefixLimit)}\u2026${suffix}`;
+  }
+  return { label, callbackData: `event:${event.id}` };
 }
 
 // ---------------------------------------------------------------------------
@@ -68,7 +73,7 @@ export interface FormattedEventList {
 // The caller is responsible for sorting events by startDate ascending.
 
 export function formatEventList(
-  events: readonly Event[],
+  events: readonly EventListing[],
   daysAhead: number,
   currentPage: number = 0,
   pageSize: number = 8,

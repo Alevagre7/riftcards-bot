@@ -9,12 +9,12 @@
 //
 // See also: setup-flow.ts
 
-import { Event } from '../../core/entities/event.js';
+import { EventListing } from '../../core/entities/event-listing.js';
 
 const TTL_MS = 5 * 60 * 1000;
 
 interface PaginationEntry {
-  readonly events: readonly Event[];
+  readonly events: readonly EventListing[];
   readonly daysAhead: number;
   readonly expiresAt: number;
 }
@@ -22,12 +22,12 @@ interface PaginationEntry {
 class EventsPaginationState {
   private readonly pending = new Map<number, PaginationEntry>();
 
-  set(telegramId: number, events: readonly Event[], daysAhead: number, ttlMs: number = TTL_MS): void {
+  set(telegramId: number, events: readonly EventListing[], daysAhead: number, ttlMs: number = TTL_MS): void {
     this.pending.set(telegramId, { events, daysAhead, expiresAt: Date.now() + ttlMs });
   }
 
   // Returns null if missing or expired. Expired entries are evicted lazily.
-  get(telegramId: number): { events: readonly Event[]; daysAhead: number } | null {
+  get(telegramId: number): { events: readonly EventListing[]; daysAhead: number } | null {
     const entry = this.pending.get(telegramId);
     if (!entry) return null;
     if (Date.now() > entry.expiresAt) {

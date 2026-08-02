@@ -22,7 +22,6 @@ function mockWatchRepository(): IEventWatchRepository {
 
 function mockEventRepository(): IEventRepository {
   return {
-    getEvents: vi.fn(),
     getEventById: vi.fn(),
     getEventRegistrations: vi.fn(),
     getEventMatches: vi.fn(),
@@ -87,6 +86,11 @@ function makePairing(overrides?: Partial<EventPairing>): EventPairing {
     score1: null,
     score2: null,
     isBye: false,
+    status: 'PENDING',
+    outcome: 'pending',
+    winner: null,
+    drawType: null,
+    gamesDrawn: 0,
     ...overrides,
   };
 }
@@ -317,7 +321,7 @@ describe('createEventWatcher', () => {
       eventRepo.getEventDetail = vi.fn().mockResolvedValue(
         makeDetail({
           currentRound: { id: 1, roundNumber: 1, status: 'COMPLETE', pairingsStatus: 'GENERATED', standingsStatus: 'GENERATED' },
-          pairings: [makePairing({ score1: 2, score2: 1 })],
+          pairings: [makePairing({ score1: 2, score2: 1, status: 'COMPLETE', outcome: 'win', winner: 'Alice' })],
         }),
       );
 
@@ -339,6 +343,64 @@ describe('createEventWatcher', () => {
         opponent: 'Bob',
         result: 'win',
       });
+    });
+    it('coalesces round, table, and opponent changes into one new-round line', async () => {
+      const watchRepo = mockWatchRepository();
+      watchRepo.list = vi.fn().mockResolvedValue([
+        makeWatch({ lastSeenRound: 2, lastSeenTable: 1, lastSeenOpponent: 'Old Opponent' }),
+      ]);
+      const eventRepo = mockEventRepository();
+      eventRepo.getEventDetail = vi.fn().mockResolvedValue(
+        makeDetail({
+          currentRound: { id: 3, roundNumber: 3, status: 'IN_PROGRESS', pairingsStatus: 'GENERATED', standingsStatus: 'GENERATED' },
+          pairings: [makePairing({ tableNumber: 5, player2: 'FireWings' })],
+        }),
+      );
+      const notify = vi.fn().mockResolvedValue(undefined);
+      const watcher = createEventWatcher(makeDeps({ watchRepository: watchRepo, eventRepository: eventRepo, notify }));
+
+      await watcher.tick();
+
+      expect(notify).toHaveBeenCalledTimes(1);
+      expect(notify.mock.calls[0]![1]).toBe('🆕 Round 3 — Table 5: You vs FireWings');
+    });
+
+    it('serializes concurrent ticks and leaves the next stable tick silent', async () => {
+      const watchRepo = mockWatchRepository();
+      let currentWatch = makeWatch();
+      watchRepo.list = vi.fn().mockImplementation(async () => [currentWatch]);
+      watchRepo.updateLastSeen = vi.fn().mockImplementation(async (_id, snapshot) => {
+        currentWatch = {
+          ...currentWatch,
+          lastSeenRound: snapshot.round,
+          lastSeenTable: snapshot.table,
+          lastSeenOpponent: snapshot.opponent,
+          lastSeenResult: snapshot.result,
+        };
+      });
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      const eventRepo = mockEventRepository();
+      eventRepo.getEventDetail = vi.fn().mockImplementation(async () => {
+        await gate;
+        return makeDetail({
+          currentRound: { id: 1, roundNumber: 1, status: 'IN_PROGRESS', pairingsStatus: 'GENERATED', standingsStatus: 'GENERATED' },
+          pairings: [makePairing({ tableNumber: 5 })],
+        });
+      });
+      const notify = vi.fn().mockResolvedValue(undefined);
+      const watcher = createEventWatcher(makeDeps({ watchRepository: watchRepo, eventRepository: eventRepo, notify }));
+
+      const first = watcher.tick();
+      const second = watcher.tick();
+      expect(second).toBe(first);
+      release();
+      await first;
+      await watcher.tick();
+
+      expect(eventRepo.getEventDetail).toHaveBeenCalledTimes(2);
+      expect(notify).toHaveBeenCalledTimes(1);
+      expect(watchRepo.updateLastSeen).toHaveBeenCalledTimes(1);
     });
   });
 });

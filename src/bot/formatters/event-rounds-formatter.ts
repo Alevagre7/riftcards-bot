@@ -47,13 +47,42 @@ export function formatEventRounds(data: RoundsData): string {
   }
 
   for (const pairing of data.pairings) {
-    const reported = pairing.score1 != null && pairing.score2 != null;
-    const score = reported
-      ? `\u2705 <b>${pairing.score1}\u2013${pairing.score2}</b>`
-      : '\u23F3 <i>not reported</i>';
-    lines.push(
-      `\uD83E\uDDBA <b>Table ${pairing.tableNumber}</b> \u00B7 \u2694\uFE0F <b>${escapeHtml(pairing.player1)}</b> vs <b>${escapeHtml(pairing.player2)}</b> \u00B7 ${score}`,
-    );
+    const winnerOnLeft = pairing.outcome === 'win' && pairing.winner === pairing.player2;
+    const leftName = winnerOnLeft ? pairing.player2 : pairing.player1;
+    const rightName = winnerOnLeft ? pairing.player1 : pairing.player2;
+    const leftScore = winnerOnLeft ? pairing.score2 : pairing.score1;
+    const rightScore = winnerOnLeft ? pairing.score1 : pairing.score2;
+    const names = `<b>${escapeHtml(leftName)}</b> \u2694\uFE0F <b>${escapeHtml(rightName)}</b>`;
+
+    let result: string;
+    switch (pairing.outcome) {
+      case 'win':
+        result = leftScore != null && rightScore != null
+          ? `\uD83C\uDFC6 ${names} \u00B7 <b>${leftScore}\u2013${rightScore}</b>`
+          : `${names} \u00B7 \u26A0\uFE0F <i>result unavailable</i>`;
+        break;
+      case 'draw':
+        result = `${names} \u00B7 \uD83E\uDD1D <b>Draw</b>${
+          pairing.drawType ? ` <i>(${pairing.drawType})</i>` : ''
+        }`;
+        break;
+      case 'pending':
+        result = `${names} \u00B7 \u23F3 <i>not reported</i>`;
+        break;
+      case 'conflict':
+        result = `${names} \u00B7 \u26A0\uFE0F <i>reports conflict</i>`;
+        break;
+      case 'loss':
+        result = `${names} \u00B7 \u274C <i>loss recorded</i>`;
+        break;
+      case 'bye':
+        result = `${names} \u00B7 \u21AA\uFE0F <i>bye</i>`;
+        break;
+      case 'unavailable':
+        result = `${names} \u00B7 \u26A0\uFE0F <i>result unavailable</i>`;
+        break;
+    }
+    lines.push(`\uD83E\uDDBA <b>Table ${pairing.tableNumber}</b> \u00B7 ${result}`);
   }
 
   return lines.join('\n');
