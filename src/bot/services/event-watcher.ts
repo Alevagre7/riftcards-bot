@@ -38,18 +38,10 @@ export interface EventWatcher {
 // Helpers
 // ---------------------------------------------------------------------------
 
-const REASON_LABELS: Record<ChangeReason, string> = {
-  'new-round': 'new-round',
-  'round-changed': 'round-changed',
-  'opponent-changed': 'opponent-changed',
-  'table-changed': 'table-changed',
-  'result-submitted': 'result-submitted',
-  'result-changed': 'result-changed',
-};
-
 /** Determine the opponent from a pairing given the watched username. */
 function getOpponent(pairing: { player1: string; player2: string }, username: string): string {
-  return pairing.player1 === username ? pairing.player2 : pairing.player1;
+  const opponent = pairing.player1 === username ? pairing.player2 : pairing.player1;
+  return opponent || 'Bye';
 }
 
 /** Build a human-readable notification body from the diff reasons. */

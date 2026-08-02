@@ -113,6 +113,18 @@ describe('RiftapiAdapter', () => {
     expect(new URL(calledUrl).pathname).toBe('/cards/riftbound/ogn-011');
   });
 
+  it('getCardById selects the requested print from multiple matches', async () => {
+    const alternate = { ...wireCard, collector_number: '11a', name: 'Magma Wurm Alt' };
+    fetchSpy.mockImplementationOnce(() =>
+      Promise.resolve(new Response(JSON.stringify([wireCard, alternate]), { status: 200 })),
+    );
+
+    const card = await adapter.getCardById('ogn-011/11a');
+
+    expect(card?.name).toBe('Magma Wurm Alt');
+    expect(card?.collectorNumber).toBe('11a');
+  });
+
   it('getCardById treats a bare riftbound id (no slash) as the riftbound id half', async () => {
     fetchSpy.mockImplementationOnce(() =>
       Promise.resolve(new Response(JSON.stringify([wireCard]), { status: 200 })),

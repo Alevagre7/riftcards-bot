@@ -233,7 +233,11 @@ export class NexusTableAdapter implements INexusTableRepository {
         throw new ApiResponseError('Nexus Table', response.status);
       }
 
-      return response.json();
+      try {
+        return await response.json();
+      } catch {
+        throw new ApiResponseError('Nexus Table', 502, 'Invalid JSON response');
+      }
     } catch (error) {
       if (error instanceof DomainError) throw error;
       throw new ApiTimeoutError('Nexus Table');

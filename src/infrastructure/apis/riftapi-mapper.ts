@@ -19,11 +19,9 @@
 //     artist, imageUrl, riftboundId, ... }
 //
 // This module owns the translation. The mapper is pure: it takes
-// a wire object and returns a Card. It does not throw; missing
-// fields are simply absent from the result. The RiftapiCard type
-// matches the actual upstream JSON; no zod validation happens
-// here (the adapter validates the search-response envelope, then
-// delegates per-item conversion to this module).
+// a validated wire object and returns a Card. It does not throw;
+// missing fields are simply absent from the result. The adapter owns
+// the Zod boundary and this module stays a pure translation function.
 
 export interface RiftapiCard {
   id?: string;
@@ -57,7 +55,7 @@ export interface RiftapiCard {
     accessibility_text?: string | null;
   } | null;
   tags?: string[] | null;
-  orientation?: string;
+  orientation?: string | null;
   metadata?: {
     clean_name?: string;
     updated_on?: string | null;

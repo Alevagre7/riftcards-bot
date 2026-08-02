@@ -25,7 +25,7 @@ type MytableAction = 'show' | 'set' | 'clear' | 'usage';
 
 function parseAction(rawArgs: string): MytableAction {
   const arg = rawArgs.trim().toLowerCase();
-  if (arg === '' || arg.startsWith('show')) return 'show';
+  if (arg === '' || arg === 'show' || arg.startsWith('show ')) return 'show';
   if (arg === 'set' || arg.startsWith('set ')) return 'set';
   if (arg === 'clear' || arg.startsWith('clear ')) return 'clear';
   return 'usage';
@@ -35,7 +35,8 @@ function parseAction(rawArgs: string): MytableAction {
 // Returns an empty string if the user only typed `/mytable set`.
 function parseSetArg(rawArgs: string): string {
   const arg = rawArgs.trim();
-  if (!arg.toLowerCase().startsWith('set')) return '';
+  const lower = arg.toLowerCase();
+  if (lower !== 'set' && !lower.startsWith('set ')) return '';
   return arg.slice(3).trim();
 }
 

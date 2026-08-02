@@ -29,7 +29,7 @@ interface NewCommandDeps {
 const ALBUM_LIMIT = 10;
 const PREVIEW_COUNT = 5;
 
-function startOfUtcDay(now: Date): Date {
+export function startOfUtcDay(now: Date): Date {
   // Build a UTC-anchored midnight for the date that is "today" in
   // UTC, regardless of the host's local timezone. We avoid
   // Date.UTC-and-set because the test environment may be in any
@@ -39,13 +39,14 @@ function startOfUtcDay(now: Date): Date {
   );
 }
 
-function isToday(card: Card, todayUtcMidnight: Date): boolean {
+export function isToday(card: Card, todayUtcMidnight: Date): boolean {
   if (!card.updatedOn) return false;
-  // updatedOn is an ISO-8601 string from the upstream. String
-  // comparison on ISO timestamps is correct (lex order = chrono
-  // order), so we compare against the ISO form of the boundary.
-  const boundaryIso = todayUtcMidnight.toISOString();
-  return card.updatedOn >= boundaryIso;
+  const updatedAt = Date.parse(card.updatedOn);
+  if (!Number.isFinite(updatedAt)) return false;
+
+  const nextUtcMidnight = new Date(todayUtcMidnight.getTime());
+  nextUtcMidnight.setUTCDate(nextUtcMidnight.getUTCDate() + 1);
+  return updatedAt >= todayUtcMidnight.getTime() && updatedAt < nextUtcMidnight.getTime();
 }
 
 async function fetchUpdatedToday(
@@ -59,12 +60,16 @@ async function fetchUpdatedToday(
   const out: Card[] = [];
   for (const set of sets) {
     let page = 1;
-    while (true) {
+    let pagesFetched = 0;
+    while (pagesFetched < 1000) {
       const result = await cardRepository.getCardsBySet(set.code, page, 100);
+      pagesFetched += 1;
       for (const c of result.cards) {
         if (isToday(c, todayUtcMidnight)) out.push(c);
       }
-      if (!result.hasMore) break;
+      // An empty page with hasMore=true is malformed pagination and would
+      // otherwise spin forever against a broken upstream.
+      if (!result.hasMore || result.cards.length === 0) break;
       page += 1;
     }
   }

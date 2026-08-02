@@ -30,7 +30,7 @@ class EventsPaginationState {
   get(telegramId: number): { events: readonly EventListing[]; daysAhead: number } | null {
     const entry = this.pending.get(telegramId);
     if (!entry) return null;
-    if (Date.now() > entry.expiresAt) {
+    if (Date.now() >= entry.expiresAt) {
       this.pending.delete(telegramId);
       return null;
     }

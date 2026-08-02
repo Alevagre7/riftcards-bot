@@ -56,6 +56,22 @@ describe('formatEventDetail', () => {
     expect(body()).toContain('Jul');
   });
 
+  it('falls back safely when upstream date metadata is invalid', () => {
+    const ev = {
+      ...baseEvent,
+      timezone: 'Not/AZone',
+      startDatetime: 'not-a-date',
+      endDatetime: 'also-not-a-date',
+      currency: 'not-a-currency',
+      costInCents: 3500,
+    };
+
+    const out = body(ev);
+
+    expect(out).toContain('Time unavailable (UTC)');
+    expect(out).toContain('35.00 not-a-currency');
+  });
+
   it('includes store name', () => {
     expect(body()).toContain('Card Castle');
   });

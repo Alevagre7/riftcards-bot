@@ -33,13 +33,23 @@ describe('formatEventList', () => {
     ];
     const out = formatEventList(events, 7);
     expect(out.buttons.map((row) => row[0]!.callbackData)).toEqual([
-      'event:3', 'event:1', 'event:2',
+      'event:list:3', 'event:list:1', 'event:list:2',
     ]);
   });
 
   it('renders normalized mode, store, and count in the requested layout', () => {
     const label = formatEventList([baseEvent], 7).buttons[0]![0]!.label;
     expect(label).toBe('🩷 Tue 21 · Skirmish · Card Castle · 8/32');
+  });
+
+  it('formats the list date in the event timezone when one is provided', () => {
+    const label = formatEventList([{
+      ...baseEvent,
+      startDatetime: '2026-08-02T00:30:00+00:00',
+      timezone: 'America/New_York',
+    }], 7).buttons[0]![0]!.label;
+
+    expect(label.startsWith('🩷 Sat 1 ·')).toBe(true);
   });
 
   it('maps every mode to its color-preserving icon', () => {

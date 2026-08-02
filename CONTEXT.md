@@ -27,8 +27,8 @@ A group of Cards released together as a single product. Defined at
 
 **Event**:
 An upcoming Riftbound tournament at a physical store. Defined at
-`src/core/entities/event.ts`. Fetched from the upstream events API via
-`EventsAdapter`; the bot's `/events` command renders a temporal window,
+`src/core/entities/event.ts`. Fetched from the official V2 events adapter;
+the bot's `/events` command renders a temporal window,
 and each individual event can be viewed as an **Event detail view**.
 
 **Event detail view**:
@@ -72,9 +72,10 @@ A per-TelegramUser setting of `{ latitude, longitude, radiusKm? }` that
 drives the `/events` command. Persisted in the `user_locations` table
 (see ADR-0006). When unset, falls back to the global
 `EVENTS_LATITUDE` / `EVENTS_LONGITUDE` / `EVENTS_RADIUS_KM` env vars.
-The `radiusKm?` is optional: `null` means "use the global radius". The
-location is captured from a Telegram `RequestLocation` button or a
-direct `message.location` pin, not from free-text input.
+The `radiusKm?` is optional: `null` means "use the global radius"; the
+setup flow stores the configured default explicitly. The location is
+captured from a Telegram `RequestLocation` button or a direct
+`message.location` pin, not from free-text input.
 
 ## Identifiers
 
@@ -115,7 +116,7 @@ deployment fails fast with an error. See ADR-0004.
 ## Bot Layer
 
 **Command**:
-A Telegraf slash handler. Three commands exist, registered in
+A Telegraf slash handler. Commands registered in
 `src/index.ts`:
 - `/card <name or ID>` — look up a card and send a preview.
 - `/random` — send a random card preview.
@@ -123,6 +124,9 @@ A Telegraf slash handler. Three commands exist, registered in
   the configured location.
 - `/events set` — share a location pin to save your own location.
 - `/events clear` — forget your saved location.
+- `/mytable [<username>]` — show a Nexus pairing, with `set`/`clear` flows.
+- `/new` — show cards updated today in UTC.
+- `/admin` — list and stop active event watches for configured admins.
 
 Each command factory takes its repository dependencies (constructor
 injection); wiring happens in `src/index.ts`. *Avoid*: "Handler" (a
@@ -130,8 +134,8 @@ command is one kind of handler; inline queries and callbacks are others).
 
 **Inline query**:
 The `@RiftCardsBot <query>` flow. Defined at `src/bot/inline-query.ts`.
-Returns up to 20 article results rendered as inline results; selecting one
-sends `/card <name>` to the chat. *Avoid*: "Inline mode" (Telegraf's term
+Returns up to 50 results rendered as inline results; selecting an image
+result sends that exact print to the chat. *Avoid*: "Inline mode" (Telegraf's term
 is "inline query").
 
 **Callback**:
@@ -142,7 +146,8 @@ preview. *Avoid*: "Action" (Telegraf uses "callback query"; the file is
 named `callbacks.ts`).
 
 **Event callback**:
-The `event:{id}` / `event:list` / `event:list:show-all` button actions.
+The `event:list:<id>`, `event:<id>`, `event:list`, and related pagination,
+round, roster, and watch button actions.
 Defined at `src/bot/actions/event-callback.ts`. Triggered when a user taps
 an inline keyboard button in the Events list or detail view; the handler
 dispatches to the appropriate render function in `src/bot/commands/events.ts`.

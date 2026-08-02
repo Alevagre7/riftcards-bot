@@ -15,10 +15,52 @@ import { Set } from '../../core/entities/set.js';
 import { ApiTimeoutError, ApiResponseError } from '../../core/errors/index.js';
 import { DomainError } from '../../core/errors/base-error.js';
 import { fetchWithRetry } from '../../utils/api-client.js';
-import { mapRiftapiCardToCard, RiftapiCard } from './riftapi-mapper.js';
+import { mapRiftapiCardToCard, type RiftapiCard } from './riftapi-mapper.js';
+
+const RiftapiCardSchema = z.object({
+  id: z.string().optional(),
+  name: z.string(),
+  riftbound_id: z.string().optional().nullable(),
+  tcgplayer_id: z.string().optional().nullable(),
+  collector_number: z.union([z.number(), z.string()]),
+  attributes: z.object({
+    energy: z.number().optional().nullable(),
+    might: z.number().optional().nullable(),
+    power: z.number().optional().nullable(),
+  }).optional().nullable(),
+  classification: z.object({
+    type: z.string().optional(),
+    supertype: z.string().optional().nullable(),
+    rarity: z.string().optional(),
+    domain: z.array(z.string()).optional(),
+  }).optional().nullable(),
+  text: z.object({
+    rich: z.string().optional(),
+    plain: z.string().optional(),
+    flavour: z.string().optional().nullable(),
+  }).optional().nullable(),
+  set: z.object({
+    set_id: z.string().optional(),
+    label: z.string().optional(),
+  }).optional().nullable(),
+  media: z.object({
+    image_url: z.string().optional().nullable(),
+    artist: z.string().optional().nullable(),
+    accessibility_text: z.string().optional().nullable(),
+  }).optional().nullable(),
+  tags: z.array(z.string()).optional().nullable(),
+  orientation: z.string().optional().nullable(),
+  metadata: z.object({
+    clean_name: z.string().optional(),
+    updated_on: z.string().optional().nullable(),
+    alternate_art: z.boolean().optional(),
+    overnumbered: z.boolean().optional(),
+    signature: z.boolean().optional(),
+  }).optional().nullable(),
+}).passthrough().transform((card): RiftapiCard => card as RiftapiCard);
 
 const RiftapiSearchResponseSchema = z.object({
-  items: z.array(z.unknown()),
+  items: z.array(RiftapiCardSchema),
   total: z.number().int().nonnegative(),
   page: z.number().int().positive(),
   size: z.number().int().nonnegative(),
@@ -71,9 +113,8 @@ export class RiftapiAdapter implements ICardRepository {
     }
 
     const parsed = RiftapiSearchResponseSchema.parse(data);
-    const items = parsed.items as RiftapiCard[];
     return {
-      cards: items.map((c) => mapRiftapiCardToCard(c)),
+      cards: parsed.items.map((c) => mapRiftapiCardToCard(c)),
       total: parsed.total,
       page: parsed.page,
       hasMore: parsed.page < parsed.pages,
@@ -81,27 +122,45 @@ export class RiftapiAdapter implements ICardRepository {
   }
 
   // getCardById: parses the composite key (riftboundId/collectorNumber),
-  // then calls GET /cards/{riftboundId}. Riftapi's primary key is the
-  // riftboundId, so a single id resolves to a single print. If the
-  // input is a bare riftbound id (no slash), the whole string is used.
+  // then calls the riftbound-id endpoint and selects the requested print
+  // from its response. The endpoint returns every print for a riftbound
+  // id, so returning the first row would silently lose alternate-art and
+  // overnumbered selections.
   async getCardById(id: string): Promise<Card | null> {
     const slash = id.indexOf('/');
     const riftboundId = slash < 0 ? id : id.slice(0, slash);
-    return this.getCardByRiftboundId(riftboundId);
+    const collectorNumber = slash < 0 ? null : id.slice(slash + 1).trim();
+    if (!riftboundId.trim() || (slash >= 0 && !collectorNumber)) return null;
+
+    const cards = await this.getCardsByRiftboundId(riftboundId);
+    if (collectorNumber == null) return cards[0] ?? null;
+
+    const normalizedCollectorNumber = collectorNumber.toLowerCase();
+    return cards.find(
+      (card) => card.collectorNumber.toLowerCase() === normalizedCollectorNumber,
+    ) ?? null;
   }
 
   // getCardByRiftboundId: GET /cards/riftbound/{id} (returns an
-  // array). Returns the first match, or null.
+  // array). Returns the first match, or null. Callers that need a
+  // specific print should use getCardById with the composite key.
   async getCardByRiftboundId(riftboundId: string): Promise<Card | null> {
+    const cards = await this.getCardsByRiftboundId(riftboundId);
+    return cards[0] ?? null;
+  }
+
+  private async getCardsByRiftboundId(riftboundId: string): Promise<Card[]> {
     const cleanId = riftboundId.toLowerCase().trim();
+    if (!cleanId) return [];
+
     const data = await this.fetchJson(
       this.buildUrl(`/cards/riftbound/${encodeURIComponent(cleanId)}`),
     );
-    if (!data) return null;
+    if (!data) return [];
 
-    const parsed = z.array(z.unknown()).safeParse(data);
-    if (!parsed.success || !parsed.data?.[0]) return null;
-    return mapRiftapiCardToCard(parsed.data[0] as RiftapiCard);
+    const parsed = z.array(RiftapiCardSchema).safeParse(data);
+    if (!parsed.success) return [];
+    return parsed.data.map((card) => mapRiftapiCardToCard(card));
   }
 
   // getCardByName: GET /cards/name?exact={name}. Returns the
@@ -116,7 +175,8 @@ export class RiftapiAdapter implements ICardRepository {
 
     const parsed = RiftapiSearchResponseSchema.parse(data);
     if (parsed.items.length === 0) return null;
-    return mapRiftapiCardToCard(parsed.items[0] as RiftapiCard);
+    const first = parsed.items[0];
+    return first ? mapRiftapiCardToCard(first) : null;
   }
 
   // getCardByTcgPlayerId: always returns null. The riftapi does
@@ -161,9 +221,8 @@ export class RiftapiAdapter implements ICardRepository {
     }
 
     const parsed = RiftapiSearchResponseSchema.parse(data);
-    const items = parsed.items as RiftapiCard[];
     return {
-      cards: items.map((c) => mapRiftapiCardToCard(c)),
+      cards: parsed.items.map((c) => mapRiftapiCardToCard(c)),
       total: parsed.total,
       page: parsed.page,
       hasMore: parsed.page < parsed.pages,
@@ -175,7 +234,8 @@ export class RiftapiAdapter implements ICardRepository {
   async getRandomCard(): Promise<Card | null> {
     const data = await this.fetchJson(this.buildUrl('/cards/random'));
     if (!data) return null;
-    return mapRiftapiCardToCard(data as RiftapiCard);
+    const parsed = RiftapiCardSchema.safeParse(data);
+    return parsed.success ? mapRiftapiCardToCard(parsed.data) : null;
   }
 
   private buildUrl(path: string, queryParams?: URLSearchParams): string {
@@ -204,7 +264,11 @@ export class RiftapiAdapter implements ICardRepository {
         throw new ApiResponseError('Riftapi', response.status);
       }
 
-      return response.json();
+      try {
+        return await response.json();
+      } catch {
+        throw new ApiResponseError('Riftapi', 502, 'Invalid JSON response');
+      }
     } catch (error) {
       if (error instanceof DomainError) throw error;
       throw new ApiTimeoutError('Riftapi');

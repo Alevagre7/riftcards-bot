@@ -50,13 +50,18 @@ export class SqliteUserSettingsRepository implements IUserSettingsRepository {
     this.getStmt = db.prepare<[number], UserLocationRow>(
       'SELECT telegram_id, latitude, longitude, radius_km, updated_at FROM user_locations WHERE telegram_id = ?',
     );
-    // INSERT OR REPLACE keeps the row id stable across updates and
-    // means callers don't have to worry about the "is this a new
-    // user or an update?" question.
+    // Use an UPDATE-on-conflict rather than INSERT OR REPLACE. SQLite's
+    // REPLACE deletes the old row first, which can surprise future
+    // foreign keys/triggers and is unnecessary for this upsert.
     this.setStmt = db.prepare<[number, number, number, number | null, string]>(
-      `INSERT OR REPLACE INTO user_locations
+      `INSERT INTO user_locations
          (telegram_id, latitude, longitude, radius_km, updated_at)
-       VALUES (?, ?, ?, ?, ?)`,
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(telegram_id) DO UPDATE SET
+         latitude = excluded.latitude,
+         longitude = excluded.longitude,
+         radius_km = excluded.radius_km,
+         updated_at = excluded.updated_at`,
     );
     this.clearStmt = db.prepare<[number]>(
       'DELETE FROM user_locations WHERE telegram_id = ?',
@@ -66,9 +71,12 @@ export class SqliteUserSettingsRepository implements IUserSettingsRepository {
       'SELECT telegram_id, username, updated_at FROM user_nexus_usernames WHERE telegram_id = ?',
     );
     this.setNexusStmt = db.prepare<[number, string, string]>(
-      `INSERT OR REPLACE INTO user_nexus_usernames
+      `INSERT INTO user_nexus_usernames
          (telegram_id, username, updated_at)
-       VALUES (?, ?, ?)`,
+       VALUES (?, ?, ?)
+       ON CONFLICT(telegram_id) DO UPDATE SET
+         username = excluded.username,
+         updated_at = excluded.updated_at`,
     );
     this.clearNexusStmt = db.prepare<[number]>(
       'DELETE FROM user_nexus_usernames WHERE telegram_id = ?',

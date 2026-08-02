@@ -2,6 +2,7 @@ import type { InlineKeyboardButton } from '@telegraf/types/markup.js';
 import { Event } from '../../core/entities/event.js';
 import { EventRegistration } from '../../core/entities/event-registration.js';
 import { escapeHtml } from './card-formatter.js';
+import { joinTelegramLines } from '../utils/telegram-text.js';
 
 // ---------------------------------------------------------------------------
 // formatEventDetail
@@ -37,12 +38,33 @@ function statusChip(displayStatus: Event['displayStatus']): string {
   }
 }
 
+function safeTimeZone(value: string): string {
+  try {
+    new Intl.DateTimeFormat('en-GB', { timeZone: value }).format();
+    return value;
+  } catch {
+    return 'UTC';
+  }
+}
+
+function formatCost(cents: number, currency: string): string {
+  try {
+    return new Intl.NumberFormat('en-GB', {
+      style: 'currency',
+      currency: currency || 'EUR',
+      currencyDisplay: 'symbol',
+    }).format(cents / 100);
+  } catch {
+    return `${(cents / 100).toFixed(2)} ${currency || 'EUR'}`;
+  }
+}
+
 export function formatEventDetail(
   event: Event,
   registrations: readonly EventRegistration[] | 'unavailable',
   options?: { privateChat?: boolean; isStarted?: boolean; showBackToList?: boolean },
 ): EventDetailResult {
-  const tz = event.timezone || 'Europe/Madrid';
+  const tz = safeTimeZone(event.timezone || 'Europe/Madrid');
   const dateFmt = new Intl.DateTimeFormat('en-GB', {
     weekday: 'short',
     month: 'short',
@@ -64,12 +86,16 @@ export function formatEventDetail(
   // Date/time (event's own timezone)
   const start = new Date(event.startDatetime);
   const end = new Date(event.endDatetime);
-  const dateStr = dateFmt.format(start);
-  const startTime = timeFmt.format(start);
-  const endTime = timeFmt.format(end);
-  lines.push(
-    `\uD83D\uDD50 <b>${dateStr} \u00B7 ${startTime}\u2013${endTime}</b> (${event.timezone})`,
-  );
+  if (Number.isFinite(start.getTime()) && Number.isFinite(end.getTime())) {
+    const dateStr = dateFmt.format(start);
+    const startTime = timeFmt.format(start);
+    const endTime = timeFmt.format(end);
+    lines.push(
+      `\uD83D\uDD50 <b>${dateStr} \u00B7 ${startTime}\u2013${endTime}</b> (${escapeHtml(tz)})`,
+    );
+  } else {
+    lines.push(`\uD83D\uDD50 Time unavailable (${escapeHtml(tz)})`);
+  }
 
   // Store
   lines.push(`\uD83C\uDFEA <b>${escapeHtml(event.store.name)}</b>`);
@@ -101,13 +127,9 @@ export function formatEventDetail(
   if (event.costInCents === 0) {
     lines.push('\uD83D\uDCB0 <b>Free</b>');
   } else if (event.costInCents != null) {
-    const currency = event.currency || 'EUR';
-    const amountFmt = new Intl.NumberFormat('en-GB', {
-      style: 'currency',
-      currency,
-      currencyDisplay: 'symbol',
-    });
-    lines.push(`\uD83D\uDCB0 <b>${amountFmt.format(event.costInCents / 100)}</b>`);
+    lines.push(
+      `\uD83D\uDCB0 <b>${escapeHtml(formatCost(event.costInCents, event.currency))}</b>`,
+    );
   }
 
   // Players
@@ -155,7 +177,7 @@ export function formatEventDetail(
   }
 
   return {
-    body: lines.join('\n'),
+    body: joinTelegramLines(lines),
     buttons,
   };
 }

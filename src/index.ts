@@ -37,7 +37,7 @@ import { SqliteEventWatchRepository } from './infrastructure/persistence/sqlite-
 import { KM_PER_MILE } from './utils/units.js';
 
 function userId(ctx: Context): string {
-  return ctx.from?.username ?? ctx.from?.id?.toString() ?? 'unknown';
+  return ctx.from?.id?.toString() ?? 'unknown';
 }
 
 function buildCardRepository(config: ReturnType<typeof loadConfig>): ICardRepository {
@@ -78,6 +78,8 @@ async function main() {
     numMiles: config.eventsRadiusKm * KM_PER_MILE,
   };
 
+  const bot = new Telegraf(config.telegramBotToken);
+
   // Open the SQLite store
   const db = openDatabase(config.userSettingsDbPath);
   const userSettingsRepository: IUserSettingsRepository =
@@ -97,7 +99,9 @@ async function main() {
 
   // Build the event watcher service (background polling)
   const notify = async (telegramId: number, body: string): Promise<void> => {
-    await bot.telegram.sendMessage(telegramId, body, { parse_mode: 'HTML' });
+    // Watcher text includes upstream player names. Send it as plain text so
+    // a name containing Telegram markup cannot break delivery.
+    await bot.telegram.sendMessage(telegramId, body);
   };
   const eventWatcher = createEventWatcher({
     watchRepository: eventWatchRepository,
@@ -106,8 +110,6 @@ async function main() {
     notify,
     intervalMs: config.nexusWatcherIntervalMs,
   });
-
-  const bot = new Telegraf(config.telegramBotToken);
 
   bot.use((ctx, next) => {
     const ts = new Date().toISOString();
@@ -126,7 +128,7 @@ async function main() {
 
   bot.use(errorHandler());
 
-  bot.telegram.setMyCommands([
+  await bot.telegram.setMyCommands([
     { command: 'start', description: 'Welcome and quick intro' },
     { command: 'help', description: 'Full command list and examples' },
     { command: 'card', description: 'Look up a card by name or ID' },
@@ -148,6 +150,7 @@ async function main() {
       eventListingRepository,
       userSettingsRepository,
       defaultLocation,
+      defaultRadiusKm: config.eventsRadiusKm,
       daysAhead: config.eventsDaysAhead,
       watchRepository: eventWatchRepository,
     }),
@@ -170,7 +173,13 @@ async function main() {
 
   bot.on('inline_query', createInlineQueryHandler({ cardRepository }));
 
-  bot.on('message', createLocationPickupHandler({ userSettingsRepository }));
+  bot.on(
+    'message',
+    createLocationPickupHandler({
+      userSettingsRepository,
+      defaultRadiusKm: config.eventsRadiusKm,
+    }),
+  );
   bot.on(
     'text',
     createNexusUsernamePickupHandler({ userSettingsRepository }),
@@ -198,6 +207,16 @@ async function main() {
   if (config.nexusWatcherEnabled) {
     eventWatcher.start();
   }
+
+  const shutdown = (signal: NodeJS.Signals): void => {
+    console.log(`Received ${signal}; shutting down`);
+    eventWatcher.stop();
+    bot.stop(signal);
+    if (db.open) db.close();
+  };
+
+  process.once('SIGINT', shutdown);
+  process.once('SIGTERM', shutdown);
 
   if (config.webhookUrl) {
     await bot.launch({

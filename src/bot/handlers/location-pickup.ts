@@ -17,6 +17,7 @@ import { NEXUS_USERNAME_RE } from '../utils/nexus-username.js';
 
 interface LocationPickupDeps {
   userSettingsRepository: IUserSettingsRepository;
+  defaultRadiusKm: number;
 }
 
 export function createLocationPickupHandler(deps: LocationPickupDeps) {
@@ -32,7 +33,7 @@ export function createLocationPickupHandler(deps: LocationPickupDeps) {
       return;
     }
 
-    const flow = setupFlow.consume(userId);
+    const flow = setupFlow.peek(userId);
     if (!flow) {
       // Not in a setup flow. Ignore stray location pins so we do
       // not overwrite a saved location accidentally. The user can
@@ -43,10 +44,23 @@ export function createLocationPickupHandler(deps: LocationPickupDeps) {
     switch (flow) {
       case 'events-set-location': {
         const { latitude, longitude } = message.location;
+        if (
+          !Number.isFinite(latitude) ||
+          !Number.isFinite(longitude) ||
+          latitude < -90 ||
+          latitude > 90 ||
+          longitude < -180 ||
+          longitude > 180
+        ) {
+          setupFlow.start(userId, flow);
+          await ctx.reply('That location pin is invalid. Please send another one.');
+          return;
+        }
+        setupFlow.consume(userId);
         await deps.userSettingsRepository.setLocation(userId, {
           latitude,
           longitude,
-          radiusKm: 80,
+          radiusKm: deps.defaultRadiusKm,
         });
         await ctx.reply(
           'Location saved! Use /events to find upcoming events near you.',
@@ -70,17 +84,28 @@ export function createNexusUsernamePickupHandler(deps: NexusUsernamePickupDeps) 
     const userId = ctx.from?.id;
     if (userId == null) return;
 
-    const flow = setupFlow.consume(userId);
+    const flow = setupFlow.peek(userId);
     if (flow !== 'mytable-set-username') return;
 
     const username = message.text.trim();
+    if (/^\/cancel(?:@\w+)?$/i.test(username)) {
+      setupFlow.cancel(userId);
+      await ctx.reply('Setup cancelled.', Markup.removeKeyboard());
+      return;
+    }
+    // Do not let another command consume the pending setup flow. The user
+    // can retry the command after handling it, or use /cancel explicitly.
+    if (username.startsWith('/')) return;
+
     if (!NEXUS_USERNAME_RE.test(username)) {
+      setupFlow.start(userId, flow);
       await ctx.reply(
         'Invalid Nexus username. Use letters, numbers, _, -, . (1-64 characters).',
       );
       return;
     }
 
+    setupFlow.consume(userId);
     await deps.userSettingsRepository.setNexusUsername(userId, username);
     await ctx.reply(
       `Nexus username saved as "${username}". Use /mytable to see your pairing.`,

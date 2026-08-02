@@ -11,6 +11,14 @@ import { z } from 'zod';
 
 const cardSourceSchema = z.enum(['riftapi', 'riftcodex']);
 
+const booleanEnvSchema = z.preprocess((value) => {
+  if (typeof value !== 'string') return value;
+  const normalized = value.trim().toLowerCase();
+  if (['true', '1', 'yes', 'on'].includes(normalized)) return true;
+  if (['false', '0', 'no', 'off'].includes(normalized)) return false;
+  return value;
+}, z.boolean());
+
 const configSchema = z.object({
   telegramBotToken: z.string().min(1, 'TELEGRAM_BOT_TOKEN is required'),
 
@@ -20,11 +28,11 @@ const configSchema = z.object({
   riftcodexBaseUrl: z.string().url().optional(),
 
   nodeEnv: z.enum(['development', 'production']).default('development'),
-  port: z.coerce.number().default(8080),
+  port: z.coerce.number().int().min(1).max(65535).default(8080),
   webhookUrl: z.string().url().optional(),
 
-  apiTimeoutMs: z.coerce.number().default(10000),
-  apiRetryAttempts: z.coerce.number().default(3),
+  apiTimeoutMs: z.coerce.number().int().positive().default(10000),
+  apiRetryAttempts: z.coerce.number().int().min(1).max(10).default(3),
 
   // Events adapter. Defaults to Seville (37.39, -5.99) at 50 mi /
   // 7 days. The lat/lon/radius here are the global default used
@@ -32,10 +40,10 @@ const configSchema = z.object({
   // /events set. See ADR-0006.
   riftboundV2BaseUrl: z.string().url().default('https://api.riftbound.uvsgames.com/api/v2'),
   riftfoundBaseUrl: z.string().url().default('https://www.riftfound.com/api'),
-  eventsLatitude: z.coerce.number().default(37.39),
-  eventsLongitude: z.coerce.number().default(-5.99),
-  eventsRadiusKm: z.coerce.number().default(80), // 50 miles
-  eventsDaysAhead: z.coerce.number().default(7),
+  eventsLatitude: z.coerce.number().min(-90).max(90).default(37.39),
+  eventsLongitude: z.coerce.number().min(-180).max(180).default(-5.99),
+  eventsRadiusKm: z.coerce.number().positive().default(80), // 50 miles
+  eventsDaysAhead: z.coerce.number().int().positive().default(7),
 
   // Nexus Table (player pairing tracker). URL defaults to the
   // Netlify-hosted function the Android app uses. Token is optional:
@@ -52,14 +60,14 @@ const configSchema = z.object({
       s
         .split(',')
         .map((n) => Number(n))
-        .filter((n) => Number.isFinite(n) && n > 0),
+        .filter((n) => Number.isInteger(n) && n > 0),
     ),
 
   // Nexus watcher (background polling). The service is constructed
   // but not started when disabled — useful for tests and kill-switch.
   // The interval tunes how often the watcher polls.
-  nexusWatcherEnabled: z.coerce.boolean().default(true),
-  nexusWatcherIntervalMs: z.coerce.number().default(30000),
+  nexusWatcherEnabled: booleanEnvSchema.default(true),
+  nexusWatcherIntervalMs: z.coerce.number().int().positive().default(30000),
 
   // Per-user settings store (see ADR-0006). Path is a file path; in
   // tests the loader can be bypassed and the path set to ':memory:'
@@ -86,6 +94,7 @@ export function loadConfig(): Config {
     port: process.env['PORT'],
     webhookUrl: process.env['WEBHOOK_URL'],
     apiTimeoutMs: process.env['API_TIMEOUT_MS'],
+    apiRetryAttempts: process.env['API_RETRY_ATTEMPTS'],
     riftboundV2BaseUrl: process.env['RIFTBOUND_V2_BASE_URL'],
     riftfoundBaseUrl: process.env['RIFTFOUND_BASE_URL'],
     eventsLatitude: process.env['EVENTS_LATITUDE'],
@@ -108,6 +117,9 @@ export function loadConfig(): Config {
   }
   if (raw.cardSource === 'riftcodex' && !raw.riftcodexBaseUrl) {
     throw new Error('RIFTCODEX_BASE_URL is required when CARD_SOURCE=riftcodex');
+  }
+  if (raw.nodeEnv === 'production' && !raw.webhookUrl) {
+    throw new Error('WEBHOOK_URL is required when NODE_ENV=production');
   }
 
   return raw;

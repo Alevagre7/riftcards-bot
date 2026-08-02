@@ -13,7 +13,7 @@
 // domain[] array, for direct display in the bot caption.
 //
 // riftboundId is the upstream's print id without the collector
-// number (e.g. `ogn-011`). It is what the /cards/{id} endpoint
+// number (e.g. `ogn-011`). It is what the riftbound-id endpoint
 // takes; the id field is what the bot's callback handlers use.
 export interface Card {
   readonly id: string;

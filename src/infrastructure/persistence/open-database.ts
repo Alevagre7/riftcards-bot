@@ -8,7 +8,7 @@
 // better-sqlite3 supports both natively; no branching needed.
 
 import Database from 'better-sqlite3';
-import { readFileSync, readdirSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -23,20 +23,40 @@ function applyMigrations(db: Database.Database): void {
   db.pragma('journal_mode = WAL');
   db.pragma('foreign_keys = ON');
 
-  // Run every .sql file in the migrations directory in order.
-  // The runner is idempotent (every DDL uses IF NOT EXISTS), so
-  // re-running on an already-migrated DB is a no-op.
+  // Track applied filenames so migrations are truly one-shot. Most of
+  // the current DDL is idempotent, but a migration that drops or rewrites
+  // legacy data must never be re-run on every process start.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS schema_migrations (
+      name       TEXT PRIMARY KEY,
+      applied_at TEXT NOT NULL
+    )
+  `);
+
+  const applied = new Set(
+    (db.prepare('SELECT name FROM schema_migrations').all() as Array<{ name: string }>)
+      .map((row) => row.name),
+  );
   const files = readdirSync(MIGRATIONS_DIR)
     .filter((f) => f.endsWith('.sql'))
     .sort();
 
   for (const file of files) {
+    if (applied.has(file)) continue;
     const sql = readFileSync(join(MIGRATIONS_DIR, file), 'utf8');
-    db.exec(sql);
+    db.transaction(() => {
+      db.exec(sql);
+      db.prepare(
+        'INSERT INTO schema_migrations (name, applied_at) VALUES (?, ?)',
+      ).run(file, new Date().toISOString());
+    })();
   }
 }
 
 export function openDatabase(path: string): Database.Database {
+  if (path !== ':memory:' && !path.startsWith('file:')) {
+    mkdirSync(dirname(path), { recursive: true });
+  }
   const db = new Database(path);
   applyMigrations(db);
   return db;

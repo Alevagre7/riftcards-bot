@@ -32,10 +32,11 @@ or stored.
 Both adapters (`RiftapiAdapter`, `RiftcodexAdapter`) and the mapper
 (`riftapi-mapper.ts`) construct the id the same way. The
 `getCardById(id)` method in each adapter parses the slash, extracts
-the `riftboundId` half, and delegates to `getCardByRiftboundId()`.
-Callers that already hold the riftboundId can skip parsing and call
-`getCardByRiftboundId()` directly. Callback handlers that parse the
-id from a button payload always have the full composite.
+the `riftboundId` half, fetches the prints for that card, and selects
+the requested collector number. Callers that already hold the
+riftboundId can skip parsing and call `getCardByRiftboundId()` directly.
+Callback handlers that parse the id from a button payload always have
+the full composite.
 
 ## Consequences
 

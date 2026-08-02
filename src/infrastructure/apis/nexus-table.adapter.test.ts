@@ -170,6 +170,14 @@ describe('NexusTableAdapter.getTable', () => {
     );
   });
 
+  it('throws ApiResponseError when the upstream returns invalid JSON', async () => {
+    fetchSpy.mockResolvedValue(new Response('<html>not json</html>', { status: 200 }));
+
+    await expect(adapter.getTable({ username: 'Test' })).rejects.toThrow(
+      'Nexus Table API returned status 502',
+    );
+  });
+
   it('throws ApiTimeoutError on network failure', async () => {
     fetchSpy.mockRejectedValue(new Error('AbortError'));
 
