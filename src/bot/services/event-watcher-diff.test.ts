@@ -5,11 +5,12 @@ import type { EventPairing } from '../../core/entities/event-detail.js';
 
 type WatchSnapshot = Pick<
   EventWatch,
-  'lastSeenRound' | 'lastSeenTable' | 'lastSeenOpponent' | 'lastSeenResult'
+  'lastSeenRound' | 'lastSeenTable' | 'lastSeenOpponent' | 'lastSeenResult' | 'hasObservedPairing'
 >;
 
 function prev(overrides?: Partial<WatchSnapshot>): WatchSnapshot {
   return {
+    hasObservedPairing: true,
     lastSeenRound: null,
     lastSeenTable: null,
     lastSeenOpponent: null,
@@ -44,6 +45,17 @@ describe('detectPairingChange', () => {
       'Alice',
     );
     expect(result.reasons).toEqual(['new-round', 'table-changed']);
+  });
+
+  it('distinguishes the first observed pairing from a new round', () => {
+    const result = detectPairingChange(
+      prev({ hasObservedPairing: false }),
+      pairing(),
+      1,
+      'Alice',
+    );
+    expect(result.reasons).toContain('first-pairing');
+    expect(result.reasons).not.toContain('new-round');
   });
 
   it('detects opponent changes', () => {

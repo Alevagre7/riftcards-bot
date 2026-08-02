@@ -3,9 +3,9 @@ import { EventListing } from '../../core/entities/event-listing.js';
 import { IEventRepository, EventLocation } from '../../core/ports/event-repository.js';
 import { IEventListingRepository } from '../../core/ports/event-listing-repository.js';
 import { IUserSettingsRepository } from '../../core/ports/user-settings-repository.js';
-import { IEventWatchRepository } from '../../core/ports/event-watch-repository.js';
+import { IEventWatchManager } from '../services/event-watch-manager.js';
 import { formatEventList } from '../formatters/event-list-formatter.js';
-import { formatEventDetail } from '../formatters/event-detail-formatter.js';
+import { formatEventDetail, EventWatchDetailState } from '../formatters/event-detail-formatter.js';
 import { setupFlow } from '../state/setup-flow.js';
 import { eventsPaginationState } from '../state/events-pagination-state.js';
 import { eventDetailOrigin } from '../state/event-detail-origin.js';
@@ -51,8 +51,8 @@ export interface EventsCommandDeps {
   // Days ahead for the events window. 7 by default, matches the
   // existing CLI; env-overridable via EVENTS_DAYS_AHEAD.
   daysAhead: number;
+  watchManager?: IEventWatchManager;
   // Optional: override Date.now() for testability.
-  watchRepository?: IEventWatchRepository;
   now?: () => Date;
 }
 
@@ -180,6 +180,17 @@ export async function renderEventDetail(
     // Detail failure → isStarted stays undefined (show everything)
   }
 
+  let watchState: EventWatchDetailState | undefined;
+  if (ctx.chat?.type === 'private' && userId != null && deps.watchManager) {
+    const active = await deps.watchManager.getStatus(userId);
+    if (!active) watchState = { kind: 'none' };
+    else if (active.watch.eventId === event.id) {
+      watchState = { kind: 'current', username: active.watch.eventUsername };
+    } else {
+      watchState = { kind: 'other' };
+    }
+  }
+
   // Default: show "Back to list" only when the user has a list
   // context (eventsPaginationState, set by renderEventList) AND this
   // event was not opened directly via /events <id> or a locator URL
@@ -195,6 +206,7 @@ export async function renderEventDetail(
     privateChat: ctx.chat?.type === 'private',
     ...(isStarted !== undefined ? { isStarted } : {}),
     ...(showBackToList === false ? { showBackToList: false } : {}),
+    ...(watchState ? { watchState } : {}),
   });
 
   const sendOptions = {
@@ -273,7 +285,7 @@ export async function renderEventsPage(
 // Subcommand parser
 // ---------------------------------------------------------------------------
 
-type EventsAction = 'show' | 'set' | 'clear' | 'unwatch' | 'usage' | 'event-id';
+type EventsAction = 'show' | 'set' | 'clear' | 'usage' | 'event-id';
 
 // EVENT_ID_THRESHOLD disambiguates `/events <N>` between a days
 // window (small N) and a direct event lookup (large N). V2 event
@@ -285,7 +297,6 @@ function parseAction(rawArgs: string): EventsAction {
   if (arg === '') return 'show';
   if (arg === 'set' || arg.startsWith('set ')) return 'set';
   if (arg === 'clear') return 'clear';
-  if (arg === 'unwatch') return 'unwatch';
   // Locator URL → direct event lookup (debug path).
   if (/^https?:\/\/locator\.riftbound\.uvsgames\.com\/events\/\d+/.test(arg)) {
     return 'event-id';
@@ -327,8 +338,7 @@ export function createEventsCommand(deps: EventsCommandDeps) {
           '/events &lt;id&gt; \u2014 show a specific event by id (debug)\n' +
           '/events &lt;locator-url&gt; \u2014 show the event at that locator link\n' +
           '/events set \u2014 share your location (or use the Share button)\n' +
-          '/events clear \u2014 forget your saved location\n' +
-          '/events unwatch \u2014 stop watching the current event',
+          '/events clear \u2014 forget your saved location',
       );
       return;
     }
@@ -404,19 +414,6 @@ export function createEventsCommand(deps: EventsCommandDeps) {
       await ctx.reply(
         `Location saved (${latitude}, ${longitude}). Use /events to find upcoming events near you.`,
       );
-      return;
-    }
-
-    if (action === 'unwatch') {
-      const userId = ctx.from?.id;
-      if (userId != null && deps.watchRepository) {
-        await deps.watchRepository.delete(userId);
-        await ctx.reply('Watcher stopped.');
-      } else if (userId == null) {
-        await ctx.reply('Could not identify your account. Please try again.');
-      } else {
-        await ctx.reply('Watch service not available.');
-      }
       return;
     }
 

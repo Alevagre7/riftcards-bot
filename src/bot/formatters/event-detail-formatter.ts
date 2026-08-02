@@ -22,6 +22,11 @@ export interface EventDetailResult {
   buttons: InlineKeyboardButton[][];
 }
 
+export type EventWatchDetailState =
+  | { readonly kind: 'none' }
+  | { readonly kind: 'current'; readonly username: string }
+  | { readonly kind: 'other' };
+
 // Status chip shown next to the event name. Colorful at a glance for
 // anyone scanning the chat: green = upcoming, yellow = in progress,
 // red = complete. Empty string (no chip) for anything unexpected.
@@ -62,7 +67,12 @@ function formatCost(cents: number, currency: string): string {
 export function formatEventDetail(
   event: Event,
   registrations: readonly EventRegistration[] | 'unavailable',
-  options?: { privateChat?: boolean; isStarted?: boolean; showBackToList?: boolean },
+  options?: {
+    privateChat?: boolean;
+    isStarted?: boolean;
+    showBackToList?: boolean;
+    watchState?: EventWatchDetailState;
+  },
 ): EventDetailResult {
   const tz = safeTimeZone(event.timezone || 'Europe/Madrid');
   const dateFmt = new Intl.DateTimeFormat('en-GB', {
@@ -166,7 +176,19 @@ export function formatEventDetail(
     options?.privateChat === true &&
     (event.displayStatus === 'upcoming' || event.displayStatus === 'inProgress')
   ) {
-    buttons.push([{ text: '\uD83D\uDC41 Watch', callback_data: `event:${event.id}:watch:start` }]);
+    switch (options.watchState?.kind) {
+      case 'current':
+        buttons.push([
+          { text: `\uD83D\uDC41 Watching ${options.watchState.username}`, callback_data: 'watch:show' },
+        ]);
+        break;
+      case 'other':
+        buttons.push([{ text: '\uD83D\uDC41 Change watch', callback_data: `event:${event.id}:watch:start` }]);
+        break;
+      default:
+        buttons.push([{ text: '\uD83D\uDC41 Watch', callback_data: `event:${event.id}:watch:start` }]);
+        break;
+    }
   }
 
   // "Back to list" makes no sense when the user opened the detail
