@@ -159,7 +159,7 @@ describe('RiftboundV2Adapter.getEvents', () => {
     };
     fetchSpy.mockResolvedValue(jsonResponse({
       ...list,
-      results: [{ ...list.results[0]!, event_type: 'LOCALS', display_status: 'cancelled' }],
+      results: [{ ...list.results[0]!, event_type: 'LOCALS', display_status: 'upcoming' }],
     }));
 
     const events = await adapter.getEvents(
@@ -169,6 +169,27 @@ describe('RiftboundV2Adapter.getEvents', () => {
     );
 
     expect(events[0]!.mode).toBe('Other');
+  });
+
+  it('does not surface canceled or unknown display statuses as upcoming events', async () => {
+    const list = loadFixture('v2-events-list.json') as {
+      results: Array<Record<string, unknown>>;
+    };
+    fetchSpy.mockResolvedValue(jsonResponse({
+      ...list,
+      results: [
+        { ...list.results[0]!, display_status: 'cancelled' },
+        { ...list.results[1]!, display_status: 'futureUnknown' },
+      ],
+    }));
+
+    const events = await adapter.getEvents(
+      new Date('2026-07-30T00:00:00.000Z'),
+      new Date('2026-08-06T00:00:00.000Z'),
+      baseLocation,
+    );
+
+    expect(events).toEqual([]);
   });
 
   it('does not expose official detail-only fields from list results', async () => {
@@ -188,6 +209,7 @@ describe('RiftboundV2Adapter.getEvents', () => {
       name: 'Torneo Semanal - La Cueva Roja Nexus Night',
       startDatetime: '2026-07-31T15:00:00+00:00',
       endDatetime: '2026-07-31T20:00:00+00:00',
+      timezone: 'Europe/Madrid',
       mode: 'Other',
       storeName: 'La Cueva Roja',
       registeredCount: 5,
@@ -358,8 +380,8 @@ describe('RiftboundV2Adapter.getEventDetail', () => {
     expect(detail!.currentRound!.roundNumber).toBe(3);
     expect(detail!.currentRound!.status).toBe('COMPLETE');
     expect(detail!.registrations).toHaveLength(11);
-    // 6 captured matches minus the single bye
-    expect(detail!.pairings).toHaveLength(5);
+    // The bundle keeps the single bye as a meaningful player result.
+    expect(detail!.pairings).toHaveLength(6);
     expect(detail!.standings).toHaveLength(11);
     expect(detail!.fetchedAt).toBeTruthy();
   });
@@ -395,7 +417,7 @@ describe('RiftboundV2Adapter.getEventDetail', () => {
     expect(fetchSpy.mock.calls.length).toBe(callsAfterFirst);
   });
 
-  it('excludes byes and attributes scores correctly', async () => {
+  it('keeps byes and attributes scores correctly', async () => {
     const matches = loadFixture('v2-round-1172657-matches.json') as {
       results: Array<Record<string, unknown>>;
     };
@@ -446,9 +468,11 @@ describe('RiftboundV2Adapter.getEventDetail', () => {
     const detail = await adapter.getEventDetail(799609, baseLocation);
 
     const pairings = detail!.pairings;
-    // 7 matches (6 captured + 1 pending) minus the bye
-    expect(pairings).toHaveLength(6);
-    expect(pairings.some((p) => p.tableNumber === 0)).toBe(false);
+    // 7 matches (6 captured + 1 pending), including the bye.
+    expect(pairings).toHaveLength(7);
+    const bye = pairings.find((p) => p.isBye);
+    expect(bye?.outcome).toBe('bye');
+    expect(bye?.player1).toBeTruthy();
 
     // Table 1: Khorgast beat TheNightman 2-0 (winning_player = rel 1)
     const table1 = pairings.find((p) => p.tableNumber === 1)!;

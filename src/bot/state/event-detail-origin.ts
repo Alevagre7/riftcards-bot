@@ -30,7 +30,7 @@ class EventDetailOrigin {
   isDirect(telegramId: number, eventId: number): boolean {
     const expiresAt = this.direct.get(key(telegramId, eventId));
     if (expiresAt == null) return false;
-    if (Date.now() > expiresAt) {
+    if (Date.now() >= expiresAt) {
       this.direct.delete(key(telegramId, eventId));
       return false;
     }

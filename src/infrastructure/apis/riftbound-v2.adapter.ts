@@ -55,7 +55,7 @@ const PhaseSchema = z.object({
 const EventListItemSchema = z.object({
   id: z.number(),
   name: z.string(),
-  display_status: z.enum(['upcoming', 'inProgress', 'complete']).catch('upcoming'),
+  display_status: z.string(),
   event_status: z.string().nullable().transform((v) => v ?? ''),
   start_datetime: z.string(),
   end_datetime: z.string(),
@@ -180,6 +180,20 @@ const StandingsResponseSchema = z.object({
 // Mappers
 // ---------------------------------------------------------------------------
 
+function normalizeDisplayStatus(value: string): Event['displayStatus'] {
+  switch (value.toLowerCase()) {
+    case 'upcoming':
+      return 'upcoming';
+    case 'inprogress':
+    case 'in_progress':
+    case 'in-progress':
+      return 'inProgress';
+    default:
+      // Unknown/canceled upstream states must never masquerade as upcoming.
+      return 'complete';
+  }
+}
+
 function mapV2PhaseToSummary(api: z.infer<typeof PhaseSchema>): EventPhaseSummary {
   return {
     id: api.id,
@@ -204,7 +218,7 @@ function mapV2EventToEvent(api: z.infer<typeof EventDetailSchema>): Event {
   return {
     id: api.id,
     name: api.name,
-    displayStatus: api.display_status,
+    displayStatus: normalizeDisplayStatus(api.display_status),
     eventStatus: api.event_status,
     startDatetime: api.start_datetime,
     endDatetime: api.end_datetime,
@@ -241,6 +255,7 @@ function mapV2EventToEventListing(api: z.infer<typeof EventListItemSchema>): Eve
     name: api.name,
     startDatetime: api.start_datetime,
     endDatetime: api.end_datetime,
+    ...(api.timezone ? { timezone: api.timezone } : {}),
     mode: normalizeEventMode(api.event_type),
     storeName: api.store.name,
     registeredCount: api.registered_user_count,
@@ -480,7 +495,12 @@ export class RiftboundV2Adapter implements IEventRepository, IEventListingReposi
     params.set('page_size', '25');
 
     const items = await this.fetchPaginated('/events/', params, EventListResponseSchema);
-    return items.map(mapV2EventToEventListing);
+    return items
+      .filter((item) => {
+        const status = normalizeDisplayStatus(item.display_status);
+        return status === 'upcoming' || status === 'inProgress';
+      })
+      .map(mapV2EventToEventListing);
   }
 
   async getEventById(id: number, _location: EventLocation): Promise<Event | null> {
@@ -539,7 +559,10 @@ export class RiftboundV2Adapter implements IEventRepository, IEventListingReposi
           StandingsResponseSchema,
         ),
       ]);
-      pairings = matches.filter((m) => !m.match_is_bye).map(mapV2MatchToPairing);
+      // Keep byes in the domain model. They are not table-vs-table
+      // matches, but they are still meaningful to a player watch and
+      // must be able to produce a "bye" notification.
+      pairings = matches.map(mapV2MatchToPairing);
       standings = standingRows.map(mapV2StandingToLeaderboardEntry);
     }
 
@@ -563,7 +586,7 @@ export class RiftboundV2Adapter implements IEventRepository, IEventListingReposi
       new URLSearchParams({ page_size: '10', avoid_cache: 'true' }),
       MatchesResponseSchema,
     );
-    return matches.filter((m) => !m.match_is_bye).map(mapV2MatchToPairing);
+    return matches.map(mapV2MatchToPairing);
   }
 
   async getEventStandings(roundId: number): Promise<EventStanding[]> {

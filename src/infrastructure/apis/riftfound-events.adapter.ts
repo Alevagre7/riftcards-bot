@@ -28,6 +28,8 @@ const RiftfoundResponseSchema = z.object({
   }),
 });
 
+const MAX_PAGES = 100;
+
 interface RiftfoundEventsAdapterOptions {
   readonly baseUrl: string;
   readonly timeoutMs: number;
@@ -50,29 +52,52 @@ export class RiftfoundEventsAdapter implements IEventListingRepository {
     startBefore: Date,
     location: EventLocation,
   ): Promise<EventListing[]> {
-    const params = new URLSearchParams();
-    params.set('calendarMode', 'true');
-    params.set('startDateFrom', startAfter.toISOString());
-    params.set('startDateTo', startBefore.toISOString());
-    params.set('lat', String(location.latitude));
-    params.set('lng', String(location.longitude));
-    params.set('radiusKm', String(milesToKm(location.numMiles)));
-    const url = new URL('events', `${this.baseUrl}/`);
+    const allEvents: EventListing[] = [];
+    let page = 1;
+    let totalPages = 1;
 
-    url.search = params.toString();
+    while (page <= totalPages && page <= MAX_PAGES) {
+      const params = new URLSearchParams();
+      params.set('calendarMode', 'true');
+      params.set('startDateFrom', startAfter.toISOString());
+      params.set('startDateTo', startBefore.toISOString());
+      params.set('lat', String(location.latitude));
+      params.set('lng', String(location.longitude));
+      params.set('radiusKm', String(milesToKm(location.numMiles)));
+      params.set('page', String(page));
+      const url = new URL('events', `${this.baseUrl}/`);
+      url.search = params.toString();
 
+      const parsed = await this.fetchPage(url.toString());
+      totalPages = Math.max(1, parsed.pagination.totalPages);
+      allEvents.push(
+        ...parsed.data.map((event) => ({
+          id: Number(event.externalId),
+          name: event.name,
+          startDatetime: event.startDate,
+          endDatetime: event.endDate,
+          mode: normalizeEventMode(event.eventType),
+          storeName: event.location,
+          registeredCount: event.playerCount,
+          capacity: event.capacity,
+        })),
+      );
+      page += 1;
+    }
+
+    return allEvents;
+  }
+
+  private async fetchPage(url: string): Promise<z.infer<typeof RiftfoundResponseSchema>> {
     let response: Response;
     try {
-      response = await fetchWithRetry(url.toString(), {
+      response = await fetchWithRetry(url, {
         timeout: this.timeoutMs,
         retries: this.retryAttempts,
         headers: { Accept: 'application/json' },
       });
     } catch (error) {
       if (error instanceof DomainError) throw error;
-      if (error instanceof Error && error.name === 'AbortError') {
-        throw new ApiTimeoutError('Riftfound');
-      }
       throw new ApiTimeoutError('Riftfound');
     }
 
@@ -87,25 +112,13 @@ export class RiftfoundEventsAdapter implements IEventListingRepository {
       throw new ApiResponseError('Riftfound', 502, 'Invalid JSON response');
     }
 
-    let parsed: z.infer<typeof RiftfoundResponseSchema>;
     try {
-      parsed = RiftfoundResponseSchema.parse(json);
+      return RiftfoundResponseSchema.parse(json);
     } catch (error) {
       if (error instanceof z.ZodError) {
         throw new ApiResponseError('Riftfound', 502, `Schema parse failed: ${error.message.slice(0, 200)}`);
       }
       throw error;
     }
-
-    return parsed.data.map((event) => ({
-      id: Number(event.externalId),
-      name: event.name,
-      startDatetime: event.startDate,
-      endDatetime: event.endDate,
-      mode: normalizeEventMode(event.eventType),
-      storeName: event.location,
-      registeredCount: event.playerCount,
-      capacity: event.capacity,
-    }));
   }
 }

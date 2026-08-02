@@ -133,24 +133,40 @@ export class RiftcodexAdapter implements ICardRepository {
   }
 
   async getCardById(id: string): Promise<Card | null> {
-    // Composite id parsing — same convention as RiftapiAdapter. If
-    // the input is a bare riftbound id (no slash), the whole string
-    // is used.
+    // Composite id parsing — same convention as RiftapiAdapter. The
+    // riftbound endpoint returns every print, so select the collector
+    // number when the caller supplied the full composite key.
     const slash = id.indexOf('/');
     const riftboundId = slash < 0 ? id : id.slice(0, slash);
-    return this.getCardByRiftboundId(riftboundId);
+    const collectorNumber = slash < 0 ? null : id.slice(slash + 1).trim();
+    if (!riftboundId.trim() || (slash >= 0 && !collectorNumber)) return null;
+
+    const cards = await this.getCardsByRiftboundId(riftboundId);
+    if (collectorNumber == null) return cards[0] ?? null;
+
+    const normalizedCollectorNumber = collectorNumber.toLowerCase();
+    return cards.find(
+      (card) => card.collectorNumber.toLowerCase() === normalizedCollectorNumber,
+    ) ?? null;
   }
 
   async getCardByRiftboundId(riftboundId: string): Promise<Card | null> {
+    const cards = await this.getCardsByRiftboundId(riftboundId);
+    return cards[0] ?? null;
+  }
+
+  private async getCardsByRiftboundId(riftboundId: string): Promise<Card[]> {
     const cleanId = riftboundId.toLowerCase().trim();
+    if (!cleanId) return [];
+
     const data = await this.fetchJson(
       this.buildUrl(`/cards/riftbound/${encodeURIComponent(cleanId)}`),
     );
-    if (!data) return null;
+    if (!data) return [];
 
     const parsed = z.array(RiftcodexCardSchema).safeParse(data);
-    if (!parsed.success || !parsed.data?.[0]) return null;
-    return this.mapToDomain(parsed.data[0]);
+    if (!parsed.success) return [];
+    return parsed.data.map((card) => this.mapToDomain(card));
   }
 
   async getCardByName(name: string): Promise<Card | null> {
@@ -254,7 +270,11 @@ export class RiftcodexAdapter implements ICardRepository {
         throw new ApiResponseError('Riftcodex', response.status);
       }
 
-      return response.json();
+      try {
+        return await response.json();
+      } catch {
+        throw new ApiResponseError('Riftcodex', 502, 'Invalid JSON response');
+      }
     } catch (error) {
       if (error instanceof DomainError) throw error;
       throw new ApiTimeoutError('Riftcodex');

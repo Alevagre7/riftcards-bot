@@ -2,12 +2,6 @@ import { EventListing } from '../../core/entities/event-listing.js';
 
 const tz = 'Europe/Madrid';
 
-const buttonDateFmt = new Intl.DateTimeFormat('en-GB', {
-  weekday: 'short',
-  day: 'numeric',
-  timeZone: tz,
-});
-
 function eventModeIcon(mode: EventListing['mode']): string {
   switch (mode) {
     case 'Skirmish':
@@ -23,8 +17,27 @@ function eventModeIcon(mode: EventListing['mode']): string {
 
 const MAX_BUTTON_LABEL = 64;
 
+function formatButtonDate(event: EventListing): string {
+  const date = new Date(event.startDatetime);
+  if (!Number.isFinite(date.getTime())) return '???';
+
+  try {
+    return new Intl.DateTimeFormat('en-GB', {
+      weekday: 'short',
+      day: 'numeric',
+      timeZone: event.timezone || tz,
+    }).format(date);
+  } catch {
+    return new Intl.DateTimeFormat('en-GB', {
+      weekday: 'short',
+      day: 'numeric',
+      timeZone: tz,
+    }).format(date);
+  }
+}
+
 function makeButton(event: EventListing): EventListButton {
-  const dayStr = buttonDateFmt.format(new Date(event.startDatetime));
+  const dayStr = formatButtonDate(event);
   const prefix = `${eventModeIcon(event.mode)} ${dayStr}`;
   const middle = `${event.mode} · ${event.storeName}`;
   const suffix = ` · ${event.registeredCount}/${event.capacity}`;
@@ -40,7 +53,10 @@ function makeButton(event: EventListing): EventListButton {
     const prefixLimit = Math.max(0, MAX_BUTTON_LABEL - suffix.length - 1);
     label = `${prefix.slice(0, prefixLimit)}\u2026${suffix}`;
   }
-  return { label, callbackData: `event:${event.id}` };
+  // Mark list-origin callbacks separately from detail/back-navigation
+  // callbacks. This lets the action handler clear a stale direct-fetch
+  // marker when the same event is later opened from a real list.
+  return { label, callbackData: `event:list:${event.id}` };
 }
 
 // ---------------------------------------------------------------------------

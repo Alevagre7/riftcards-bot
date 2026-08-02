@@ -74,6 +74,24 @@ describe('RiftfoundEventsAdapter', () => {
     await expect(adapter.getEvents(new Date(), new Date(), location)).resolves.toEqual([]);
   });
 
+  it('follows Riftfound pagination', async () => {
+    fetchSpy
+      .mockResolvedValueOnce(response({
+        data: [base],
+        pagination: { page: 1, limit: 1, total: 2, totalPages: 2 },
+      }))
+      .mockResolvedValueOnce(response({
+        data: [{ ...base, externalId: '2', name: 'Second Event' }],
+        pagination: { page: 2, limit: 1, total: 2, totalPages: 2 },
+      }));
+
+    const events = await adapter.getEvents(new Date(), new Date(), location);
+
+    expect(events.map((event) => event.id)).toEqual([762945, 2]);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(new URL(fetchSpy.mock.calls[1]![0] as string).searchParams.get('page')).toBe('2');
+  });
+
   it('rejects malformed external IDs and non-success responses', async () => {
     fetchSpy.mockResolvedValueOnce(response(payload([{ ...base, externalId: 'rift-762945' }])));
     await expect(adapter.getEvents(new Date(), new Date(), location)).rejects.toThrow('Schema parse failed');

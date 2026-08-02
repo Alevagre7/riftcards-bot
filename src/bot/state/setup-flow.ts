@@ -25,6 +25,16 @@ class SetupFlow {
     this.pending.set(telegramId, { kind, expiresAt: Date.now() + ttlMs });
   }
 
+  peek(telegramId: number): FlowKind | null {
+    const entry = this.pending.get(telegramId);
+    if (!entry) return null;
+    if (Date.now() >= entry.expiresAt) {
+      this.pending.delete(telegramId);
+      return null;
+    }
+    return entry.kind;
+  }
+
   // consume returns the flow kind if `telegramId` has a live
   // pending flow, and clears it (one-shot). Returns null if there
   // is no flow, or the flow has expired.
@@ -32,7 +42,7 @@ class SetupFlow {
     const entry = this.pending.get(telegramId);
     if (!entry) return null;
     this.pending.delete(telegramId);
-    if (Date.now() > entry.expiresAt) return null;
+    if (Date.now() >= entry.expiresAt) return null;
     return entry.kind;
   }
 

@@ -13,6 +13,8 @@ export interface EventListing {
   readonly name: string;
   readonly startDatetime: string;
   readonly endDatetime: string;
+  /** IANA timezone supplied by the listing provider, when available. */
+  readonly timezone?: string;
   readonly mode: EventMode;
   readonly storeName: string;
   readonly registeredCount: number;

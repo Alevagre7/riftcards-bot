@@ -10,7 +10,7 @@ import { setupFlow } from '../state/setup-flow.js';
 import { eventsPaginationState } from '../state/events-pagination-state.js';
 import { eventDetailOrigin } from '../state/event-detail-origin.js';
 import { stripCommand } from '../utils/strip-command.js';
-import { kmToMiles } from '../../utils/units.js';
+import { kmToMiles, milesToKm } from '../../utils/units.js';
 
 // Module-level constants for the window-picker menu. The button count
 // is fixed at 4 so the keyboard is a single row; if the array grows
@@ -44,6 +44,10 @@ export interface EventsCommandDeps {
   // still has a useful default behaviour. The radius here is in
   // miles (the upstream API's unit).
   defaultLocation: EventLocation;
+  // The radius saved with a new user location. Keeping this in km matches
+  // the persistence contract and avoids baking the historical 80 km
+  // default into command logic.
+  defaultRadiusKm?: number;
   // Days ahead for the events window. 7 by default, matches the
   // existing CLI; env-overridable via EVENTS_DAYS_AHEAD.
   daysAhead: number;
@@ -56,9 +60,9 @@ export interface EventsCommandDeps {
 // Location resolution
 // ---------------------------------------------------------------------------
 
-async function resolveLocation(
+export async function resolveEventLocation(
   userId: number | undefined,
-  deps: EventsCommandDeps,
+  deps: Pick<EventsCommandDeps, 'defaultLocation' | 'userSettingsRepository'>,
 ): Promise<EventLocation> {
   if (userId == null) return deps.defaultLocation;
 
@@ -88,7 +92,7 @@ export async function renderEventList(
   await ctx.sendChatAction('typing');
 
   const userId = ctx.from?.id;
-  const location = await resolveLocation(userId, deps);
+  const location = await resolveEventLocation(userId, deps);
 
   const now = deps.now ? deps.now() : new Date();
   // Widen the window backwards by IN_PROGRESS_LOOKBACK_HOURS so events
@@ -150,7 +154,7 @@ export async function renderEventDetail(
   await ctx.sendChatAction('typing');
 
   const userId = ctx.from?.id;
-  const location = await resolveLocation(userId, deps);
+  const location = await resolveEventLocation(userId, deps);
 
   // Fetch event + registrations in parallel
   const [event, registrations] = await Promise.all([
@@ -333,7 +337,7 @@ export function createEventsCommand(deps: EventsCommandDeps) {
       const trimmed = rawArgs.trim();
       const id = /^\d+$/.test(trimmed)
         ? Number(trimmed)
-        : Number(trimmed.match(/\/events\/(\d+)/)?.[1] ?? '0') || null;
+        : Number(trimmed.match(/\/events\/(\d+)/i)?.[1] ?? '0') || null;
       if (id == null) {
         await ctx.reply('Could not read the event id. Use a bare number or a locator URL.');
         return;
@@ -395,7 +399,7 @@ export function createEventsCommand(deps: EventsCommandDeps) {
       await deps.userSettingsRepository.setLocation(userId, {
         latitude,
         longitude,
-        radiusKm: 80, // matches the pin flow (src/bot/handlers/location-pickup.ts:49)
+        radiusKm: deps.defaultRadiusKm ?? milesToKm(deps.defaultLocation.numMiles),
       });
       await ctx.reply(
         `Location saved (${latitude}, ${longitude}). Use /events to find upcoming events near you.`,
@@ -448,4 +452,3 @@ export function createEventsCommand(deps: EventsCommandDeps) {
     await renderEventList(ctx, deps, parsed);
   };
 }
-

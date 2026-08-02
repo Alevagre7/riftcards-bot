@@ -96,6 +96,7 @@ describe('createEventsCommand — /events set inline coords', () => {
       eventListingRepository: eventRepo,
       userSettingsRepository: userSettings,
       defaultLocation: { latitude: 0, longitude: 0, numMiles: 50 },
+      defaultRadiusKm: 80,
       daysAhead: 7,
     });
   }
@@ -208,6 +209,7 @@ describe('createEventsCommand — /events <id> and <url> debug path', () => {
       eventListingRepository: eventRepo,
       userSettingsRepository: userSettings,
       defaultLocation: { latitude: 0, longitude: 0, numMiles: 50 },
+      defaultRadiusKm: 80,
       daysAhead: 7,
     });
   }
@@ -326,6 +328,7 @@ describe('createEventsCommand — /events window menu', () => {
       eventListingRepository: eventRepo,
       userSettingsRepository: userSettings,
       defaultLocation: { latitude: 0, longitude: 0, numMiles: 50 },
+      defaultRadiusKm: 80,
       daysAhead: 7,
       ...over,
     });
@@ -385,7 +388,7 @@ describe('createEventsCommand — /events window menu', () => {
     const ids = getReplyKeyboard(ctx)!.inline_keyboard.flat()
       .map((button) => button.callback_data)
       .filter((value): value is string => typeof value === 'string');
-    expect(ids).toContain('event:1');
+    expect(ids).toContain('event:list:1');
   });
 
   it('excludes a finished event', async () => {
@@ -416,7 +419,7 @@ describe('createEventsCommand — /events window menu', () => {
     const ids = getReplyKeyboard(ctx)!.inline_keyboard.flat()
       .map((button) => button.callback_data)
       .filter((value): value is string => typeof value === 'string');
-    expect(ids).toContain('event:1');
+    expect(ids).toContain('event:list:1');
   });
 });
 
@@ -582,6 +585,22 @@ describe('createEventActionHandler — event:list back-to-list fix', () => {
     expect(texts).toContain('\u2190 Back to list');
   });
 
+  it('clears a direct-origin marker when an event is opened from a list row', async () => {
+    eventDetailOrigin.markDirect(TEST_USER_ID, 498515);
+    eventsPaginationState.set(TEST_USER_ID, [baseListing({ id: 498515 })], 7);
+    (eventRepo.getEventById as Mock).mockResolvedValueOnce(baseEvent({ id: 498515 }));
+    (eventRepo.getEventRegistrations as Mock).mockResolvedValueOnce([]);
+
+    const editMessageText = vi.fn().mockResolvedValue(undefined);
+    const ctx = makeCallbackCtx('event:list:498515');
+    (ctx as unknown as { editMessageText: Mock }).editMessageText = editMessageText;
+    await makeHandler(7)(ctx);
+
+    const call = editMessageText.mock.calls[0] as [string, { reply_markup?: { inline_keyboard: { text: string }[][] } }];
+    const texts = (call[1]?.reply_markup?.inline_keyboard ?? []).flat().map((b) => b.text);
+    expect(texts).toContain('\u2190 Back to list');
+  });
+
   it('leaderboard falls back to the latest round that has standings data', async () => {
     const round1 = { id: 1, roundNumber: 1, status: 'COMPLETE' as const, pairingsStatus: 'GENERATED', standingsStatus: 'GENERATED' };
     const round2 = { id: 2, roundNumber: 2, status: 'IN_PROGRESS' as const, pairingsStatus: 'GENERATED', standingsStatus: 'NOT_GENERATED' };
@@ -610,6 +629,47 @@ describe('createEventActionHandler — event:list back-to-list fix', () => {
     const call = editMessageText.mock.calls[0] as [string, unknown];
     expect(String(call[0])).toContain('Round <b>1</b>');
     expect(String(call[0])).toContain('<b>Alice</b>');
+  });
+
+  it('orders round navigation by phase order when round numbers repeat', async () => {
+    const phaseOneRound = {
+      id: 11,
+      roundNumber: 1,
+      status: 'COMPLETE' as const,
+      pairingsStatus: 'GENERATED',
+      standingsStatus: 'GENERATED',
+    };
+    const phaseTwoRound = {
+      id: 22,
+      roundNumber: 1,
+      status: 'IN_PROGRESS' as const,
+      pairingsStatus: 'GENERATED',
+      standingsStatus: 'GENERATED',
+    };
+    const detail = {
+      event: {
+        ...baseEvent({ id: 498515 }),
+        tournamentPhases: [
+          { id: 2, status: 'IN_PROGRESS' as const, orderInPhases: 2, phaseName: 'Top Cut', rounds: [phaseTwoRound] },
+          { id: 1, status: 'COMPLETE' as const, orderInPhases: 1, phaseName: 'Swiss', rounds: [phaseOneRound] },
+        ],
+      },
+      currentRound: phaseTwoRound,
+      registrations: [],
+      pairings: [],
+      standings: [],
+      fetchedAt: '2026-08-01T00:00:00Z',
+    };
+    (eventRepo.getEventDetail as Mock).mockResolvedValueOnce(detail);
+
+    const editMessageText = vi.fn().mockResolvedValue(undefined);
+    const ctx = makeCallbackCtx('event:498515:rounds');
+    (ctx as unknown as { editMessageText: Mock }).editMessageText = editMessageText;
+    await makeHandler(7)(ctx);
+
+    const keyboard = (editMessageText.mock.calls[0] as [string, { reply_markup: { inline_keyboard: { callback_data?: string }[][] } }])[1]
+      .reply_markup.inline_keyboard;
+    expect(keyboard[0]?.[0]?.callback_data).toBe('event:498515:rounds:round:11');
   });
 
   it('shows Back to list for a different event opened from a list after a direct fetch', async () => {

@@ -7,10 +7,16 @@ import { IUserSettingsRepository } from '../../core/ports/user-settings-reposito
 import { EventRoundSummary } from '../../core/entities/event.js';
 import { EventRegistration } from '../../core/entities/event-registration.js';
 import { EventPairing, EventStanding } from '../../core/entities/event-detail.js';
-import { renderEventList, renderEventDetail, renderEventsPage } from '../commands/events.js';
+import {
+  renderEventList,
+  renderEventDetail,
+  renderEventsPage,
+  resolveEventLocation,
+} from '../commands/events.js';
 import { formatEventLeaderboard } from '../formatters/event-leaderboard-formatter.js';
 import { formatEventRounds } from '../formatters/event-rounds-formatter.js';
 import { eventsPaginationState } from '../state/events-pagination-state.js';
+import { eventDetailOrigin } from '../state/event-detail-origin.js';
 import { escapeHtml } from '../formatters/card-formatter.js';
 
 interface EventActionDeps {
@@ -27,7 +33,7 @@ export function createEventActionHandler(deps: EventActionDeps) {
   return async (ctx: Context) => {
     const data =
       ctx.callbackQuery && 'data' in ctx.callbackQuery ? ctx.callbackQuery.data : undefined;
-    if (!data || !data.startsWith('event:') && !data.startsWith('admin:')) return;
+    if (!data || (!data.startsWith('event:') && !data.startsWith('admin:'))) return;
 
     await ctx.answerCbQuery();
 
@@ -68,6 +74,17 @@ export function createEventActionHandler(deps: EventActionDeps) {
       const stored = userId != null ? eventsPaginationState.get(userId) : null;
       const days = stored?.daysAhead ?? deps.daysAhead;
       await renderEventList(ctx, deps, days);
+      return;
+    }
+
+    // Event opened from an actual list row. Clear a marker left by a
+    // previous `/events <id>` direct lookup for this same event.
+    const listEventMatch = /^event:list:(\d+)$/.exec(data);
+    if (listEventMatch) {
+      const eventId = parseInt(listEventMatch[1]!, 10);
+      const userId = ctx.from?.id;
+      if (userId != null) eventDetailOrigin.clear(userId, eventId);
+      await renderEventDetail(ctx, deps, eventId);
       return;
     }
 
@@ -160,41 +177,48 @@ export function createEventActionHandler(deps: EventActionDeps) {
 // Hoisted so the handlers below can reference it.
 function composeRoundViewKeyboard(
   allRounds: readonly EventRoundSummary[],
-  displayedRoundNumber: number | null,
+  displayedRoundId: number | null,
   eventId: number,
   kind: 'leaderboard' | 'rounds',
 ): InlineKeyboardButton[][] {
   const keyboard: InlineKeyboardButton[][] = [];
-  if (displayedRoundNumber != null) {
-    const nav = buildRoundNavRow(allRounds, displayedRoundNumber, eventId, kind);
+  if (displayedRoundId != null) {
+    const nav = buildRoundNavRow(allRounds, displayedRoundId, eventId, kind);
     if (nav.length > 0) keyboard.push(nav);
   }
   keyboard.push([{ text: '\u2190 Back to event', callback_data: `event:${eventId}` }]);
   return keyboard;
 }
 
+function orderRounds(
+  phases: readonly { orderInPhases: number; rounds: readonly EventRoundSummary[] }[],
+): EventRoundSummary[] {
+  return [...phases]
+    .sort((a, b) => a.orderInPhases - b.orderInPhases)
+    .flatMap((phase) => [...phase.rounds].sort((a, b) => a.roundNumber - b.roundNumber));
+}
+
 function buildRoundNavRow(
   allRounds: readonly EventRoundSummary[],
-  currentRoundNumber: number,
+  currentRoundId: number,
   eventId: number,
   kind: 'leaderboard' | 'rounds',
 ): InlineKeyboardButton[] {
-  const sorted = [...allRounds].sort((a, b) => a.roundNumber - b.roundNumber);
-  const idx = sorted.findIndex((r) => r.roundNumber === currentRoundNumber);
+  const idx = allRounds.findIndex((r) => r.id === currentRoundId);
   if (idx === -1) return [];
   const row: InlineKeyboardButton[] = [];
   if (idx > 0) {
-    const prev = sorted[idx - 1]!;
+    const prev = allRounds[idx - 1]!;
     row.push({
       text: `\u2190 Round ${prev.roundNumber}`,
-      callback_data: `event:${eventId}:${kind}:round:${prev.roundNumber}`,
+      callback_data: `event:${eventId}:${kind}:round:${prev.id}`,
     });
   }
-  if (idx < sorted.length - 1) {
-    const next = sorted[idx + 1]!;
+  if (idx < allRounds.length - 1) {
+    const next = allRounds[idx + 1]!;
     row.push({
       text: `Round ${next.roundNumber} \u2192`,
-      callback_data: `event:${eventId}:${kind}:round:${next.roundNumber}`,
+      callback_data: `event:${eventId}:${kind}:round:${next.id}`,
     });
   }
   return row;
@@ -208,16 +232,25 @@ async function handleLeaderboard(
   ctx: Context,
   deps: EventActionDeps,
   eventId: number,
-  roundNumber?: number,
+  roundId?: number,
 ): Promise<void> {
-  const data = await deps.eventRepository.getEventDetail(eventId, deps.defaultLocation);
-  if (!data) { await ctx.answerCbQuery('Event data not available.'); return; }
-  const allRounds = data.event.tournamentPhases.flatMap((p) => p.rounds);
+  const location = await resolveEventLocation(ctx.from?.id, deps);
+  const data = await deps.eventRepository.getEventDetail(eventId, location);
+  if (!data) {
+    await ctx.reply('Event data not available.');
+    return;
+  }
+  const allRounds = orderRounds(data.event.tournamentPhases);
+  let displayedRoundId: number | null = null;
   let displayedRoundNumber: number | null = null;
   let standings: readonly EventStanding[] = [];
-  if (roundNumber != null) {
-    const round = allRounds.find((r) => r.roundNumber === roundNumber);
-    if (!round) { await ctx.answerCbQuery('Round not found.'); return; }
+  if (roundId != null) {
+    const round = allRounds.find((r) => r.id === roundId);
+    if (!round) {
+      await ctx.reply('Round not found.');
+      return;
+    }
+    displayedRoundId = round.id;
     displayedRoundNumber = round.roundNumber;
     standings = await deps.eventRepository.getEventStandings(round.id);
   } else {
@@ -225,7 +258,7 @@ async function handleLeaderboard(
     // data. The current round often has none (standings are only
     // generated once the round completes or results land), which
     // previously rendered an empty leaderboard.
-    const sorted = [...allRounds].sort((a, b) => b.roundNumber - a.roundNumber);
+    const sorted = [...allRounds].reverse();
     const startIdx = data.currentRound != null
       ? Math.max(0, sorted.findIndex((r) => r.id === data.currentRound!.id))
       : 0;
@@ -236,6 +269,7 @@ async function handleLeaderboard(
         ? data.standings
         : await deps.eventRepository.getEventStandings(round.id);
       if (rows.length > 0) {
+        displayedRoundId = round.id;
         displayedRoundNumber = round.roundNumber;
         standings = rows;
         found = true;
@@ -243,6 +277,7 @@ async function handleLeaderboard(
       }
     }
     if (!found) {
+      displayedRoundId = data.currentRound?.id ?? null;
       displayedRoundNumber = data.currentRound?.roundNumber ?? null;
       standings = data.standings;
     }
@@ -253,7 +288,7 @@ async function handleLeaderboard(
     standings,
   });
   const keyboard = composeRoundViewKeyboard(
-    allRounds, displayedRoundNumber, eventId, 'leaderboard',
+    allRounds, displayedRoundId, eventId, 'leaderboard',
   );
   await ctx.editMessageText(body, {
     parse_mode: 'HTML',
@@ -269,22 +304,32 @@ async function handleRounds(
   ctx: Context,
   deps: EventActionDeps,
   eventId: number,
-  roundNumber?: number,
+  roundId?: number,
 ): Promise<void> {
-  const data = await deps.eventRepository.getEventDetail(eventId, deps.defaultLocation);
-  if (!data) { await ctx.answerCbQuery('Event data not available.'); return; }
-  const allRounds = data.event.tournamentPhases.flatMap((p) => p.rounds);
+  const location = await resolveEventLocation(ctx.from?.id, deps);
+  const data = await deps.eventRepository.getEventDetail(eventId, location);
+  if (!data) {
+    await ctx.reply('Event data not available.');
+    return;
+  }
+  const allRounds = orderRounds(data.event.tournamentPhases);
   let displayedRound: EventRoundSummary | null;
+  let displayedRoundId: number | null;
   let displayedRoundNumber: number | null;
   let pairings: readonly EventPairing[];
-  if (roundNumber != null) {
-    const round = allRounds.find((r) => r.roundNumber === roundNumber);
-    if (!round) { await ctx.answerCbQuery('Round not found.'); return; }
+  if (roundId != null) {
+    const round = allRounds.find((r) => r.id === roundId);
+    if (!round) {
+      await ctx.reply('Round not found.');
+      return;
+    }
     displayedRound = round;
+    displayedRoundId = round.id;
     displayedRoundNumber = round.roundNumber;
     pairings = await deps.eventRepository.getEventMatches(round.id);
   } else {
     displayedRound = data.currentRound;
+    displayedRoundId = data.currentRound?.id ?? null;
     displayedRoundNumber = data.currentRound?.roundNumber ?? null;
     pairings = data.pairings;
   }
@@ -294,7 +339,7 @@ async function handleRounds(
     pairings,
   });
   const keyboard = composeRoundViewKeyboard(
-    allRounds, displayedRoundNumber, eventId, 'rounds',
+    allRounds, displayedRoundId, eventId, 'rounds',
   );
   await ctx.editMessageText(body, {
     parse_mode: 'HTML',
@@ -313,9 +358,10 @@ async function handleWatchStart(
   deps: EventActionDeps,
   eventId: number,
 ): Promise<void> {
-  const data = await deps.eventRepository.getEventDetail(eventId, deps.defaultLocation);
+  const location = await resolveEventLocation(ctx.from?.id, deps);
+  const data = await deps.eventRepository.getEventDetail(eventId, location);
   if (!data) {
-    await ctx.answerCbQuery('Event data not available.', { show_alert: true });
+    await ctx.reply('Event data not available.');
     return;
   }
 
@@ -328,9 +374,10 @@ async function handleWatchPage(
   eventId: number,
   page: number,
 ): Promise<void> {
-  const data = await deps.eventRepository.getEventDetail(eventId, deps.defaultLocation);
+  const location = await resolveEventLocation(ctx.from?.id, deps);
+  const data = await deps.eventRepository.getEventDetail(eventId, location);
   if (!data) {
-    await ctx.answerCbQuery('Roster changed, please try again.', { show_alert: true });
+    await ctx.reply('Roster changed, please try again.');
     return;
   }
   await sendRosterPage(ctx, data.event.id, data.registrations, page);
@@ -353,7 +400,7 @@ async function sendRosterPage(
 
   const totalPages = Math.ceil(roster.length / NAMES_PER_PAGE);
   if (page < 0 || page >= totalPages) {
-    await ctx.answerCbQuery('Roster changed, please try again.', { show_alert: true });
+    await ctx.reply('Roster changed, please try again.');
     return;
   }
 
@@ -398,19 +445,20 @@ async function handleWatchSelect(
 ): Promise<void> {
   const userId = ctx.from?.id;
   if (userId == null) {
-    await ctx.answerCbQuery('Could not identify your account.', { show_alert: true });
+    await ctx.reply('Could not identify your account.');
     return;
   }
 
-  const data = await deps.eventRepository.getEventDetail(eventId, deps.defaultLocation);
+  const location = await resolveEventLocation(userId, deps);
+  const data = await deps.eventRepository.getEventDetail(eventId, location);
   if (!data) {
-    await ctx.answerCbQuery('Roster changed, please try again.', { show_alert: true });
+    await ctx.reply('Roster changed, please try again.');
     return;
   }
 
   const rosterEntry = data.registrations.find((entry) => entry.id === registrationId);
   if (!rosterEntry) {
-    await ctx.answerCbQuery('Roster changed, please try again.', { show_alert: true });
+    await ctx.reply('Roster changed, please try again.');
     return;
   }
 
@@ -445,7 +493,7 @@ async function handleAdminStop(
 ): Promise<void> {
   const adminId = ctx.from?.id;
   if (adminId == null || !deps.adminTelegramIds.includes(adminId)) {
-    await ctx.answerCbQuery('This command is restricted.');
+    await ctx.reply('This command is restricted.');
     return;
   }
 

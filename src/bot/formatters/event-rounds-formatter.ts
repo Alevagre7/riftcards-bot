@@ -3,6 +3,7 @@
 import { EventRoundSummary } from '../../core/entities/event.js';
 import { EventPairing } from '../../core/entities/event-detail.js';
 import { escapeHtml } from './card-formatter.js';
+import { joinTelegramLines } from '../utils/telegram-text.js';
 
 export interface RoundsData {
   /** The event display name. */
@@ -47,6 +48,14 @@ export function formatEventRounds(data: RoundsData): string {
   }
 
   for (const pairing of data.pairings) {
+    if (pairing.outcome === 'bye' || pairing.isBye) {
+      const player = pairing.player1 || pairing.player2 || 'Unknown player';
+      lines.push(
+        `\uD83E\uDDBA <b>Table ${pairing.tableNumber}</b> \u00B7 <b>${escapeHtml(player)}</b> \u00B7 \u21AA\uFE0F <i>bye</i>`,
+      );
+      continue;
+    }
+
     const winnerOnLeft = pairing.outcome === 'win' && pairing.winner === pairing.player2;
     const leftName = winnerOnLeft ? pairing.player2 : pairing.player1;
     const rightName = winnerOnLeft ? pairing.player1 : pairing.player2;
@@ -75,9 +84,6 @@ export function formatEventRounds(data: RoundsData): string {
       case 'loss':
         result = `${names} \u00B7 \u274C <i>loss recorded</i>`;
         break;
-      case 'bye':
-        result = `${names} \u00B7 \u21AA\uFE0F <i>bye</i>`;
-        break;
       case 'unavailable':
         result = `${names} \u00B7 \u26A0\uFE0F <i>result unavailable</i>`;
         break;
@@ -85,5 +91,5 @@ export function formatEventRounds(data: RoundsData): string {
     lines.push(`\uD83E\uDDBA <b>Table ${pairing.tableNumber}</b> \u00B7 ${result}`);
   }
 
-  return lines.join('\n');
+  return joinTelegramLines(lines);
 }

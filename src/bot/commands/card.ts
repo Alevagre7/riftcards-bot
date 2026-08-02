@@ -2,6 +2,7 @@ import { Context, Markup } from 'telegraf';
 import { ICardRepository } from '../../core/ports/card-repository.js';
 import { sendCardPreview } from '../utils/send-card-preview.js';
 import { formatVersionLabel, sortByVersion } from '../formatters/card-label.js';
+import { escapeHtml } from '../formatters/card-formatter.js';
 import { stripCommand } from '../utils/strip-command.js';
 
 interface CardCommandDeps {
@@ -21,20 +22,26 @@ export function createCardCommand(deps: CardCommandDeps) {
       return;
     }
 
+    const safeQuery = escapeHtml(query);
+
     await ctx.sendChatAction('typing');
 
     // The id may be either a bare riftbound id (`ogn-011`) or a
     // composite (riftboundId/collectorNumber, e.g. `ogn-011/298`).
-    // Both forms route through getCardByRiftboundId with the
-    // riftbound id half. See ADR-0001.
-    const idMatch = /^([a-z]{3,4}-\d{3}[a-z]?)(?:\/\d+)?$/i.exec(query);
+    // Bare IDs resolve through getCardByRiftboundId; composite IDs
+    // resolve through getCardById so the selected print is preserved.
+    const idMatch = /^([a-z]{3,4}-\d{3}[a-z]?)(?:\/([a-z0-9._-]+))?$/i.exec(query);
     if (idMatch) {
-      const card = await deps.cardRepository.getCardByRiftboundId(idMatch[1]!);
+      const riftboundId = idMatch[1];
+      if (!riftboundId) return;
+      const card = idMatch[2]
+        ? await deps.cardRepository.getCardById(query)
+        : await deps.cardRepository.getCardByRiftboundId(riftboundId);
       if (card) {
         await sendCardPreview(ctx, card);
       } else {
         await ctx.reply(
-          `No card found for ID "${query}".`,
+          `No card found for ID "${safeQuery}".`,
           { parse_mode: 'HTML' },
         );
       }
@@ -48,7 +55,7 @@ export function createCardCommand(deps: CardCommandDeps) {
 
     if (results.cards.length === 0) {
       await ctx.reply(
-        `No card found for "${query}". Try a different name or ID.`,
+        `No card found for "${safeQuery}". Try a different name or ID.`,
         { parse_mode: 'HTML' },
       );
       return;
@@ -87,7 +94,7 @@ export function createCardCommand(deps: CardCommandDeps) {
     ]);
 
     await ctx.reply(
-      `Results for "<b>${query}</b>" (${results.total} found):`,
+      `Results for "<b>${safeQuery}</b>" (${results.total} found):`,
       {
         parse_mode: 'HTML',
         ...Markup.inlineKeyboard(buttons),

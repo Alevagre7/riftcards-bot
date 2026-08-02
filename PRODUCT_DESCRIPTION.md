@@ -34,7 +34,7 @@ Hexagonal architecture (Ports & Adapters) ensures API providers can be swapped w
 │                    ↓ Implemented by Adapters                 │
 ├─────────────────────────────────────────────────────────────┤
 │                    Infrastructure                            │
-│  (RiftapiAdapter, EventsAdapter)                              │
+│  (RiftapiAdapter, RiftboundV2Adapter, RiftfoundEventsAdapter) │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -46,12 +46,15 @@ Hexagonal architecture (Ports & Adapters) ensures API providers can be swapped w
 
 | Command | Description |
 |---------|-------------|
-| `/card <name>` | Look up a card by name or ID (e.g. `ogn-011`). Shows image + name. If multiple results, shows clickable buttons. |
+| `/card <name or ID>` | Look up a card by name or ID (e.g. `ogn-011` or `ogn-011/298`). Shows image + name; ambiguous names show clickable print choices. |
 | `/random` | Get a random card image + name. |
-| `/events` | List upcoming Riftbound events near the configured location (next 7 days, configurable radius). Shows name, store, date/time, format. |
+| `/events` | List upcoming Riftbound events near the configured location (next 7 days, configurable radius), with detail, standings, rounds, and watch flows. |
+| `/mytable` | Look up and save a Nexus pairing username. |
+| `/new` | Show cards updated during the current UTC day. |
+| `/admin` | List and stop active event watches for configured admins. |
 
 ### Inline Mode
-Type `@RiftCardsBot <card name>` in any chat to search cards inline. Tapping a result sends `/card <name>` to the chat.
+Type `@RiftCardsBot <card name>` in any chat to search cards inline. Selecting a result sends that exact print directly; cards without an image fall back to `/card <composite-id>`.
 
 ### Callback Buttons
 - `card:{id}` — Card result buttons (from `/card` search results). Opens the full card preview.
@@ -68,30 +71,33 @@ Type `@RiftCardsBot <card name>` in any chat to search cards inline. Tapping a r
 **Used endpoints (RiftAPI):**
 | Endpoint | Use |
 |----------|-----|
-| `GET /cards/search?q=` | Search cards by fuzzy name |
-| `GET /cards/{riftbound_id}` | Get card by Riftbound ID (e.g. `ogn-011`) |
+| `GET /cards/search?query=` | Search cards by fuzzy name |
+| `GET /cards/riftbound/{id}` | Get all prints for a Riftbound ID (e.g. `ogn-011`) |
 | `GET /cards/random` | Get a random card |
 
 **Fallback endpoints (Riftcodex):**
 | Endpoint | Use |
 |----------|-----|
 | `GET /cards/name?fuzzy=` | Search cards by fuzzy name |
-| `GET /cards/{id}` | Get card by Riftcodex UUID |
 | `GET /cards/riftbound/{id}` | Get card by Riftbound ID (e.g. `ogn-011`) |
+| `GET /cards/tcgplayer/{id}` | Get card by TCGplayer product ID |
 | `GET /index/card-names` | Get all card names (random card) |
 
-### 2. Events — Spicerack API
-- **Base URL**: `https://api.cloudflare.riftbound.uvsgames.com`
+### 2. Events — Riftfound + official V2 APIs
+- **List primary**: `https://www.riftfound.com/api`
+- **Detail/live fallback and source of truth**: `https://api.riftbound.uvsgames.com/api/v2`
 - **Auth**: None (public)
-- **Adapter**: `src/infrastructure/apis/events.adapter.ts`
-- **Port**: `IEventRepository`
+- **Adapters**: `riftfound-events.adapter.ts` and `riftbound-v2.adapter.ts`
+- **Ports**: `IEventListingRepository` and `IEventRepository`
 
 **Used endpoint:**
 | Endpoint | Use |
 |----------|-----|
-| `GET /hydraproxy/api/v2/events/` | Search events by location, date range, game |
+| `GET /api/v2/events/` | Search official events by location, date range, and game |
 
-**Parameters**: `start_date_after`, `start_date_before` (configured window), `game_slug=riftbound`, `latitude`/`longitude` (configured location), `radius` (configurable), `display_statuses=upcoming,inProgress`.
+**Parameters**: The V2 listing uses `start_date_after`, `start_date_before`,
+`game_slug=riftbound`, `latitude`/`longitude`, and `num_miles`. Riftfound
+uses its calendar endpoint and radius in kilometres.
 
 ---
 
@@ -142,7 +148,8 @@ Type `@RiftCardsBot <card name>` in any chat to search cards inline. Tapping a r
 │   │   │   ├── riftapi.adapter.ts
 │   │   │   ├── riftapi-mapper.ts
 │   │   │   ├── riftcodex.adapter.ts
-│   │   │   └── events.adapter.ts
+│   │   │   ├── riftbound-v2.adapter.ts
+│   │   │   └── riftfound-events.adapter.ts
 │   └── utils/
 │       └── api-client.ts
 ```
@@ -166,11 +173,16 @@ API_TIMEOUT_MS=10000                    # 10 seconds
 API_RETRY_ATTEMPTS=3                    # Exponential backoff retries
 
 # Events (defaults shown)
-# EVENTS_API_URL=https://api.cloudflare.riftbound.uvsgames.com
+# RIFTBOUND_V2_BASE_URL=https://api.riftbound.uvsgames.com/api/v2
+# RIFTFOUND_BASE_URL=https://www.riftfound.com/api
 # EVENTS_LATITUDE=37.39
 # EVENTS_LONGITUDE=-5.99
 # EVENTS_RADIUS_KM=80
 # EVENTS_DAYS_AHEAD=7
+# NEXUS_TABLE_API_URL=https://riftboundtoolkit.netlify.app/.netlify/functions/nexus-table
+# NEXUS_WATCHER_ENABLED=true
+# NEXUS_WATCHER_INTERVAL_MS=30000
+# USER_SETTINGS_DB_PATH=/data/riftbot.db
 ```
 
 ---
@@ -260,7 +272,7 @@ Bot connects via polling (no webhook needed). Requires `.env` with `TELEGRAM_BOT
 - [ ] `/random` — returns a valid card
 - [ ] `/events` — shows upcoming events near the configured location
 - [ ] Inline mode (`@RiftCardsBot ahri`) — shows list with thumbnails
-- [ ] Tapping inline result sends `/card <name>` to chat
+- [ ] Tapping inline result sends the selected print to chat
 - [ ] Card search result buttons work
 - [ ] Error messages display on API failures
 
@@ -268,9 +280,7 @@ Bot connects via polling (no webhook needed). Requires `.env` with `TELEGRAM_BOT
 
 ## Future Enhancements
 
-- [ ] User location configuration for events
 - [ ] Collection / wishlist tracking
 - [ ] Price alerts
-- [ ] Admin commands
 
 *(End of document)*

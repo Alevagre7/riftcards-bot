@@ -13,7 +13,10 @@ project is not part of the official Riot developer ecosystem.
 - `/card <name|id>` — fuzzy card lookup; multi-match inline buttons
   appear when the query is ambiguous.
 - `/random` — one-shot random card with preview.
-- `/events` — upcoming Riftbound events near a configurable location.
+- `/events` — upcoming Riftbound events near a configurable location,
+  with detail, standings, table, and private-chat watch flows.
+- `/mytable` — look up and save a Nexus pairing username.
+- `/new` — show cards updated during the current UTC day.
 - `@RiftCardsBot <query>` — inline search with thumbnails (works in
   any chat).
 
@@ -58,16 +61,23 @@ values.
 | `CARD_SOURCE` | yes | — | `riftapi` or `riftcodex` (see ADR-0004) |
 | `RIFTAPI_BASE_URL` | conditional | — | Required when `CARD_SOURCE=riftapi` |
 | `RIFTCODEX_BASE_URL` | conditional | — | Required when `CARD_SOURCE=riftcodex` |
-| `NODE_ENV` | no | `development` | `development` (polling) or `production` (webhook) |
+| `NODE_ENV` | no | `development` | `development` (polling) or `production` (webhook; requires `WEBHOOK_URL`) |
 | `PORT` | no | `8080` | HTTP port in webhook mode |
 | `WEBHOOK_URL` | conditional | — | Required when `NODE_ENV=production` |
 | `API_TIMEOUT_MS` | no | `10000` | HTTP request timeout to the card source |
 | `API_RETRY_ATTEMPTS` | no | `3` | Retry count with exponential backoff |
-| `EVENTS_API_URL` | no | upstream URL | Base URL for event data |
+| `RIFTBOUND_V2_BASE_URL` | no | official V2 URL | Event details, registrations, and live results |
+| `RIFTFOUND_BASE_URL` | no | Riftfound URL | Primary event-list provider |
 | `EVENTS_LATITUDE` | no | `37.39` | Latitude for event search (Seville) |
 | `EVENTS_LONGITUDE` | no | `-5.99` | Longitude for event search (Seville) |
 | `EVENTS_RADIUS_KM` | no | `80` | Search radius in kilometres |
 | `EVENTS_DAYS_AHEAD` | no | `7` | Look-ahead window for events |
+| `NEXUS_TABLE_API_URL` | no | hosted Nexus endpoint | Nexus pairing lookup endpoint |
+| `NEXUS_TABLE_API_TOKEN` | no | — | Optional Nexus endpoint token |
+| `NEXUS_WATCHER_ENABLED` | no | `true` | Enable background event-watch polling |
+| `NEXUS_WATCHER_INTERVAL_MS` | no | `30000` | Watcher polling interval |
+| `ADMIN_TELEGRAM_IDS` | no | — | Comma-separated Telegram IDs allowed to use `/admin` |
+| `USER_SETTINGS_DB_PATH` | no | `/data/riftbot.db` | SQLite path for user settings and watches |
 
 ---
 
@@ -113,6 +123,7 @@ services:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
       CARD_SOURCE: riftapi
       RIFTAPI_BASE_URL: http://api:8080
+      NODE_ENV: development
     depends_on:
       api:
         condition: service_healthy
@@ -147,7 +158,8 @@ implement those interfaces and are wired in at startup.
 
 Two card-source adapters are available: **RiftapiAdapter** (primary)
 and **RiftcodexAdapter** (fallback), selected by the `CARD_SOURCE` env
-var. An **EventsAdapter** handles the `/events` command.
+var. Event listings use Riftfound with official V2 fallback; official V2
+also provides event details and live tournament data.
 
 ```typescript
 import { ICardRepository } from '../../core/ports/card-repository.js';
@@ -183,9 +195,9 @@ in `docs/adr/`.
 | `npm run build` | Compile with `tsc` to `dist/` |
 | `npm run lint` | Type-check without emitting (`tsc --noEmit`) |
 
-Test coverage is intentionally minimal — only the riftapi adapter and
-its mapper have tests. See the scope note in
-`IMPLEMENTATION_PLAN.md` and ADR-0002 for the rationale.
+The test suite covers bot flows, formatters, API adapters, watcher
+diffing, and SQLite repositories. Run `npm test -- --run` for a
+non-watch test run.
 
 ---
 

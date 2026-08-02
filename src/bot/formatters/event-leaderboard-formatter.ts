@@ -3,6 +3,7 @@
 
 import { EventStanding } from '../../core/entities/event-detail.js';
 import { escapeHtml } from './card-formatter.js';
+import { joinTelegramLines } from '../utils/telegram-text.js';
 
 export interface LeaderboardData {
   readonly name: string;
@@ -46,5 +47,5 @@ export function formatEventLeaderboard(data: LeaderboardData): string {
     );
   }
 
-  return lines.join('\n');
+  return joinTelegramLines(lines);
 }

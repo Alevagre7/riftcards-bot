@@ -61,6 +61,7 @@ function makeContext(data: string): Context {
     from: { id: 7, is_bot: false, first_name: 'Tester' },
     callbackQuery: { id: 'callback', data, chat_instance: 'chat', message: {} } as never,
     answerCbQuery: vi.fn().mockResolvedValue(true),
+    reply: vi.fn().mockResolvedValue(true),
     editMessageText: vi.fn().mockResolvedValue(true),
   } as unknown as Context;
 }
@@ -133,7 +134,7 @@ describe('event watch callbacks', () => {
     }));
   });
 
-  it('alerts instead of upserting when a registration ID disappeared', async () => {
+  it('reports instead of upserting when a registration ID disappeared', async () => {
     const watch = watchRepository();
     const { handler } = makeHandler(detail(registrations.slice(0, 8)), watch);
     const ctx = makeContext('event:42:watch:select:108');
@@ -141,6 +142,7 @@ describe('event watch callbacks', () => {
     await handler(ctx);
 
     expect(watch.upsert).not.toHaveBeenCalled();
-    expect(ctx.answerCbQuery).toHaveBeenLastCalledWith('Roster changed, please try again.', { show_alert: true });
+    expect(ctx.answerCbQuery).toHaveBeenCalledTimes(1);
+    expect(ctx.reply).toHaveBeenCalledWith('Roster changed, please try again.');
   });
 });

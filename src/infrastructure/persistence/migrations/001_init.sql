@@ -11,9 +11,8 @@ CREATE TABLE IF NOT EXISTS user_locations (
   longitude    REAL    NOT NULL,
   -- NULL means "use the global EVENTS_RADIUS_KM env default". A
   -- non-null value overrides the global radius for that user.
-  -- Not currently written by the v1 /events set flow (the flow
-  -- only captures the location pin), but the column is reserved
-  -- for a future /events radius <km> command.
+  -- The setup flow stores the configured default explicitly; NULL is
+  -- retained for callers that want to use the global radius.
   radius_km    REAL,
   updated_at   TEXT    NOT NULL
 );
