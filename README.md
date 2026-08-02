@@ -15,6 +15,7 @@ project is not part of the official Riot developer ecosystem.
 - `/random` — one-shot random card with preview.
 - `/events` — upcoming Riftbound events near a configurable location,
   with detail, standings, table, and private-chat watch flows.
+- `/watching` — inspect, refresh, change, or stop your active event watch.
 - `/mytable` — look up and save a Nexus pairing username.
 - `/new` — show cards updated during the current UTC day.
 - `@RiftCardsBot <query>` — inline search with thumbnails (works in

@@ -236,6 +236,24 @@ describe('formatEventDetail', () => {
     expect(watchBtn?.callback_data).toBe('event:42:watch:start');
   });
 
+  it('shows the active player and management action for the current event', () => {
+    const result = formatEventDetail(baseEvent, [], {
+      privateChat: true,
+      watchState: { kind: 'current', username: 'Alice' },
+    });
+    const button = result.buttons.flat().find((candidate) => candidate.text === '👁 Watching Alice');
+    expect(button && 'callback_data' in button ? button.callback_data : undefined).toBe('watch:show');
+  });
+
+  it('shows Change watch when the active watch belongs to another event', () => {
+    const result = formatEventDetail(baseEvent, [], {
+      privateChat: true,
+      watchState: { kind: 'other' },
+    });
+    const button = result.buttons.flat().find((candidate) => candidate.text === '👁 Change watch');
+    expect(button && 'callback_data' in button ? button.callback_data : undefined).toBe('event:42:watch:start');
+  });
+
   it('omits "Back to list" when showBackToList is false (event-id path)', () => {
     const result = formatEventDetail(baseEvent, [], { showBackToList: false });
     const texts = result.buttons.flat().map((b) => b.text);

@@ -35,7 +35,8 @@ describe('createHelpCommand', () => {
     expect(text).toContain('/events 14');
     expect(text).toContain('/events set');
     expect(text).toContain('/events clear');
-    expect(text).toContain('/events unwatch');
+    expect(text).not.toContain('/events unwatch');
+    expect(text).toContain('/watching');
     expect(text).toContain('Watch');
   });
 

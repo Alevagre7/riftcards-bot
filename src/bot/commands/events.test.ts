@@ -477,12 +477,14 @@ describe('createEventActionHandler — event:list back-to-list fix', () => {
     return createEventActionHandler({
       eventRepository: eventRepo,
       eventListingRepository: eventRepo,
-      watchRepository: {
+      watchManager: {
         list: vi.fn().mockResolvedValue([]),
         get: vi.fn(),
-        upsert: vi.fn(),
-        delete: vi.fn(),
-        updateLastSeen: vi.fn(),
+        getStatus: vi.fn(),
+        refreshStatus: vi.fn(),
+        requestSubscription: vi.fn(),
+        replaceSubscription: vi.fn(),
+        stop: vi.fn(),
       } as never,
       userSettingsRepository: userSettings,
       defaultLocation: { latitude: 0, longitude: 0, numMiles: 50 },

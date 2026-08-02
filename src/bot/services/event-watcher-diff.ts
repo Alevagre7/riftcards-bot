@@ -6,6 +6,7 @@ import { EventWatch } from '../../core/entities/event-watch.js';
 import { EventPairing } from '../../core/entities/event-detail.js';
 
 export type ChangeReason =
+  | 'first-pairing'
   | 'new-round'
   | 'round-changed'
   | 'opponent-changed'
@@ -25,6 +26,7 @@ export function detectPairingChange(
     | 'lastSeenTable'
     | 'lastSeenOpponent'
     | 'lastSeenResult'
+    | 'hasObservedPairing'
   >,
   next: EventPairing,
   currentRound: number | null,
@@ -32,8 +34,12 @@ export function detectPairingChange(
 ): PairingDiff {
   const reasons: ChangeReason[] = [];
 
-  // new-round: prev had no round, now there is one.
-  if (prev.lastSeenRound === null && currentRound !== null) {
+  // The first observation after subscribing is different from a genuine
+  // new round. The boolean survives the short gap between rounds while
+  // the current pairing snapshot may be cleared during that gap.
+  if (!prev.hasObservedPairing && currentRound !== null) {
+    reasons.push('first-pairing');
+  } else if (prev.lastSeenRound === null && currentRound !== null) {
     reasons.push('new-round');
   }
 

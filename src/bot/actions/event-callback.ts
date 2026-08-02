@@ -2,8 +2,10 @@ import { Context } from 'telegraf';
 import type { InlineKeyboardButton } from '@telegraf/types/markup.js';
 import { IEventRepository, EventLocation } from '../../core/ports/event-repository.js';
 import { IEventListingRepository } from '../../core/ports/event-listing-repository.js';
-import { IEventWatchRepository } from '../../core/ports/event-watch-repository.js';
 import { IUserSettingsRepository } from '../../core/ports/user-settings-repository.js';
+import { IEventWatchManager } from '../services/event-watch-manager.js';
+import type { WatchSubscriptionResult } from '../services/event-watch-manager.js';
+import type { EventWatch } from '../../core/entities/event-watch.js';
 import { EventRoundSummary } from '../../core/entities/event.js';
 import { EventRegistration } from '../../core/entities/event-registration.js';
 import { EventPairing, EventStanding } from '../../core/entities/event-detail.js';
@@ -18,11 +20,12 @@ import { formatEventRounds } from '../formatters/event-rounds-formatter.js';
 import { eventsPaginationState } from '../state/events-pagination-state.js';
 import { eventDetailOrigin } from '../state/event-detail-origin.js';
 import { escapeHtml } from '../formatters/card-formatter.js';
+import { formatEventWatchStatus, formatNoEventWatch } from '../formatters/event-watch-formatter.js';
 
 interface EventActionDeps {
   eventRepository: IEventRepository;
   eventListingRepository: IEventListingRepository;
-  watchRepository: IEventWatchRepository;
+  watchManager: IEventWatchManager;
   userSettingsRepository: IUserSettingsRepository;
   defaultLocation: EventLocation;
   daysAhead: number;
@@ -33,7 +36,7 @@ export function createEventActionHandler(deps: EventActionDeps) {
   return async (ctx: Context) => {
     const data =
       ctx.callbackQuery && 'data' in ctx.callbackQuery ? ctx.callbackQuery.data : undefined;
-    if (!data || (!data.startsWith('event:') && !data.startsWith('admin:'))) return;
+    if (!data || (!data.startsWith('event:') && !data.startsWith('admin:') && !data.startsWith('watch:'))) return;
 
     await ctx.answerCbQuery();
 
@@ -41,9 +44,34 @@ export function createEventActionHandler(deps: EventActionDeps) {
     if (data === 'event:noop') return;
 
     // Admin: stop watch
-    const adminStopMatch = /^admin:stop:(\d+)$/.exec(data);
+    const adminStopMatch = /^admin:stop:(\d+):(.+)$/.exec(data);
     if (adminStopMatch) {
-      await handleAdminStop(ctx, deps, parseInt(adminStopMatch[1]!, 10));
+      await handleAdminStop(ctx, deps, parseInt(adminStopMatch[1]!, 10), adminStopMatch[2]!);
+      return;
+    }
+
+    if (data === 'watch:show') {
+      await handleWatchStatus(ctx, deps, false);
+      return;
+    }
+    if (data === 'watch:refresh') {
+      await handleWatchStatus(ctx, deps, true);
+      return;
+    }
+    const watchStopMatch = /^watch:stop:(.+)$/.exec(data);
+    if (watchStopMatch) {
+      await handleWatchStop(ctx, deps, watchStopMatch[1]!);
+      return;
+    }
+    const watchReplaceMatch = /^watch:replace:(\d+):(\d+):(.+)$/.exec(data);
+    if (watchReplaceMatch) {
+      await handleWatchReplace(
+        ctx,
+        deps,
+        parseInt(watchReplaceMatch[1]!, 10),
+        parseInt(watchReplaceMatch[2]!, 10),
+        watchReplaceMatch[3]!,
+      );
       return;
     }
 
@@ -358,6 +386,10 @@ async function handleWatchStart(
   deps: EventActionDeps,
   eventId: number,
 ): Promise<void> {
+  if (ctx.chat?.type !== 'private') {
+    await ctx.reply('Watch management is available in a private chat with me.');
+    return;
+  }
   const location = await resolveEventLocation(ctx.from?.id, deps);
   const data = await deps.eventRepository.getEventDetail(eventId, location);
   if (!data) {
@@ -365,7 +397,12 @@ async function handleWatchStart(
     return;
   }
 
-  await sendRosterPage(ctx, data.event.id, data.registrations, 0);
+  await sendRosterPage(
+    ctx,
+    data.event.id,
+    data.registrations.filter((entry) => entry.status === 'Active'),
+    0,
+  );
 }
 
 async function handleWatchPage(
@@ -374,13 +411,22 @@ async function handleWatchPage(
   eventId: number,
   page: number,
 ): Promise<void> {
+  if (ctx.chat?.type !== 'private') {
+    await ctx.reply('Watch management is available in a private chat with me.');
+    return;
+  }
   const location = await resolveEventLocation(ctx.from?.id, deps);
   const data = await deps.eventRepository.getEventDetail(eventId, location);
   if (!data) {
     await ctx.reply('Roster changed, please try again.');
     return;
   }
-  await sendRosterPage(ctx, data.event.id, data.registrations, page);
+  await sendRosterPage(
+    ctx,
+    data.event.id,
+    data.registrations.filter((entry) => entry.status === 'Active'),
+    page,
+  );
 }
 
 async function sendRosterPage(
@@ -392,7 +438,7 @@ async function sendRosterPage(
   const buttons: InlineKeyboardButton[][] = [];
   if (roster.length === 0) {
     buttons.push([{ text: '\u2190 Back to event', callback_data: `event:${eventId}` }]);
-    await ctx.editMessageText('No players available to watch yet.', {
+    await ctx.editMessageText('No active players available to watch yet.', {
       reply_markup: { inline_keyboard: buttons },
     });
     return;
@@ -443,6 +489,10 @@ async function handleWatchSelect(
   eventId: number,
   registrationId: number,
 ): Promise<void> {
+  if (ctx.chat?.type !== 'private') {
+    await ctx.reply('Watch management is available in a private chat with me.');
+    return;
+  }
   const userId = ctx.from?.id;
   if (userId == null) {
     await ctx.reply('Could not identify your account.');
@@ -457,29 +507,168 @@ async function handleWatchSelect(
   }
 
   const rosterEntry = data.registrations.find((entry) => entry.id === registrationId);
-  if (!rosterEntry) {
+  if (!rosterEntry || rosterEntry.status !== 'Active') {
     await ctx.reply('Roster changed, please try again.');
     return;
   }
 
-  const now = new Date().toISOString();
-  await deps.watchRepository.upsert({
-    telegramId: userId,
+  const result = await deps.watchManager.requestSubscription(userId, {
     eventId,
     eventName: data.event.name,
     eventUsername: rosterEntry.name,
-    lastSeenRound: null,
-    lastSeenTable: null,
-    lastSeenOpponent: null,
-    lastSeenResult: null,
-    createdAt: now,
-    updatedAt: now,
   });
+  await renderWatchSelectionResult(ctx, result, data.event.name, rosterEntry.name, eventId, registrationId);
+}
 
-  await ctx.editMessageText(
-    `\uD83D\uDCE1 Watching <b>${escapeHtml(rosterEntry.name)}</b> \u2014 I'll DM you when their next pairing appears. Use /events unwatch to stop.`,
-    { parse_mode: 'HTML', reply_markup: { inline_keyboard: [] } },
+async function handleWatchReplace(
+  ctx: Context,
+  deps: EventActionDeps,
+  eventId: number,
+  registrationId: number,
+  expectedRevision: string,
+): Promise<void> {
+  if (ctx.chat?.type !== 'private') {
+    await ctx.reply('Watch management is available in a private chat with me.');
+    return;
+  }
+  const userId = ctx.from?.id;
+  if (userId == null) {
+    await ctx.reply('Could not identify your account.');
+    return;
+  }
+  const location = await resolveEventLocation(userId, deps);
+  const data = await deps.eventRepository.getEventDetail(eventId, location);
+  const rosterEntry = data?.registrations.find((entry) => entry.id === registrationId);
+  if (!data || !rosterEntry || rosterEntry.status !== 'Active') {
+    await ctx.reply('Roster changed, please try again.');
+    return;
+  }
+  const result = await deps.watchManager.replaceSubscription(
+    userId,
+    { eventId, eventName: data.event.name, eventUsername: rosterEntry.name },
+    expectedRevision,
   );
+  if (result.kind === 'stale') {
+    await editWatchMessage(ctx, 'That replacement is no longer current.', [[{ text: 'View watch', callback_data: 'watch:show' }]]);
+    return;
+  }
+  if (result.kind !== 'subscribed') return;
+  await renderWatchConfirmation(ctx, result.watch, true);
+}
+
+async function renderWatchSelectionResult(
+  ctx: Context,
+  result: WatchSubscriptionResult,
+  eventName: string,
+  username: string,
+  eventId: number,
+  registrationId: number,
+): Promise<void> {
+  if (result.kind === 'already-watching') {
+    await editWatchMessage(
+      ctx,
+      `\uD83D\uDC41 Already watching <b>${escapeHtml(username)}</b> at <b>${escapeHtml(eventName)}</b>.`,
+      [
+        [{ text: 'View watch', callback_data: 'watch:show' }],
+        [{ text: '\uD83D\uDED1 Stop watching', callback_data: `watch:stop:${result.watch.revision}` }],
+      ],
+    );
+    return;
+  }
+  if (result.kind === 'needs-confirmation') {
+    await editWatchMessage(
+      ctx,
+      `You are currently watching <b>${escapeHtml(result.current.eventUsername)}</b> at <b>${escapeHtml(result.current.eventName)}</b>. Replace it with <b>${escapeHtml(username)}</b> at <b>${escapeHtml(eventName)}</b>?`,
+      [
+        [{ text: 'Replace watch', callback_data: `watch:replace:${eventId}:${registrationId}:${result.current.revision}` }],
+        [{ text: 'Keep current', callback_data: 'watch:show' }],
+      ],
+    );
+    return;
+  }
+  if (result.kind === 'subscribed') {
+    await renderWatchConfirmation(ctx, result.watch, false);
+  }
+}
+
+async function renderWatchConfirmation(
+  ctx: Context,
+  watch: EventWatch,
+  replaced: boolean,
+): Promise<void> {
+  const action = replaced ? 'Watch replaced' : 'Watching';
+  await editWatchMessage(
+    ctx,
+    `\uD83D\uDCE1 ${action} <b>${escapeHtml(watch.eventUsername)}</b> at <b>${escapeHtml(watch.eventName)}</b>. I\'ll DM you about every pairing and result update.`,
+    [
+      [{ text: 'View watch', callback_data: 'watch:show' }],
+      [{ text: '\uD83D\uDED1 Stop watching', callback_data: `watch:stop:${watch.revision}` }],
+    ],
+  );
+}
+
+async function handleWatchStatus(
+  ctx: Context,
+  deps: EventActionDeps,
+  refresh: boolean,
+): Promise<void> {
+  if (ctx.chat?.type !== 'private') {
+    await ctx.reply('Watch management is available in a private chat with me.');
+    return;
+  }
+  const userId = ctx.from?.id;
+  if (userId == null) {
+    await ctx.reply('Could not identify your account.');
+    return;
+  }
+  const status = refresh
+    ? await deps.watchManager.refreshStatus(userId)
+    : await deps.watchManager.getStatus(userId);
+  if (!status) {
+    const empty = formatNoEventWatch(deps.daysAhead);
+    await editWatchMessage(ctx, empty.body, empty.buttons);
+    return;
+  }
+  const message = formatEventWatchStatus(status, { daysAhead: deps.daysAhead });
+  await editWatchMessage(ctx, message.body, message.buttons, true);
+}
+
+async function handleWatchStop(ctx: Context, deps: EventActionDeps, revision: string): Promise<void> {
+  if (ctx.chat?.type !== 'private') {
+    await ctx.reply('Watch management is available in a private chat with me.');
+    return;
+  }
+  const userId = ctx.from?.id;
+  if (userId == null) {
+    await ctx.reply('Could not identify your account.');
+    return;
+  }
+  const result = await deps.watchManager.stop(userId, revision);
+  switch (result.kind) {
+    case 'stopped':
+      await editWatchMessage(ctx, '\uD83D\uDED1 Watch stopped.', []);
+      return;
+    case 'no-active-watch':
+      await editWatchMessage(ctx, 'You are not watching anyone.', []);
+      return;
+    case 'stale':
+      await editWatchMessage(ctx, 'That watch is no longer active.', []);
+      return;
+  }
+}
+
+async function editWatchMessage(
+  ctx: Context,
+  body: string,
+  buttons: InlineKeyboardButton[][],
+  html = true,
+): Promise<void> {
+  const options = {
+    ...(html ? { parse_mode: 'HTML' as const } : {}),
+    reply_markup: { inline_keyboard: buttons },
+  };
+  if (ctx.callbackQuery?.message) await ctx.editMessageText(body, options);
+  else await ctx.reply(body, options);
 }
 
 // ---------------------------------------------------------------------------
@@ -490,6 +679,7 @@ async function handleAdminStop(
   ctx: Context,
   deps: EventActionDeps,
   targetTelegramId: number,
+  revision: string,
 ): Promise<void> {
   const adminId = ctx.from?.id;
   if (adminId == null || !deps.adminTelegramIds.includes(adminId)) {
@@ -497,10 +687,10 @@ async function handleAdminStop(
     return;
   }
 
-  await deps.watchRepository.delete(targetTelegramId);
+  await deps.watchManager.stop(targetTelegramId, revision);
 
   // Re-fetch the list and rebuild the message
-  const watches = await deps.watchRepository.list();
+  const watches = await deps.watchManager.list();
   if (watches.length === 0) {
     await ctx.editMessageText('No active watches.');
     return;
@@ -512,9 +702,9 @@ async function handleAdminStop(
   for (const w of watches) {
     const ago = formatRelative(w.updatedAt, new Date());
     lines.push(
-      `\u2022 ${w.telegramId} watching ${w.eventUsername} @ ${w.eventName} (event ${w.eventId}) \u2014 last seen: round ${w.lastSeenRound ?? '\u2014'}, table ${w.lastSeenTable ?? '\u2014'} (${ago})`,
+      `\u2022 ${w.telegramId} watching ${w.eventUsername} @ ${w.eventName} (event ${w.eventId}) \u2014 last change: round ${w.lastSeenRound ?? '\u2014'}, table ${w.lastSeenTable ?? '\u2014'} (${ago}); checked ${formatRelative(w.lastCheckedAt, new Date())}`,
     );
-    buttons.push([{ text: 'Stop', callback_data: `admin:stop:${w.telegramId}` }]);
+    buttons.push([{ text: 'Stop', callback_data: `admin:stop:${w.telegramId}:${w.revision}` }]);
   }
 
   await ctx.editMessageText(lines.join('\n'), {
@@ -526,7 +716,8 @@ async function handleAdminStop(
 // Helpers
 // ---------------------------------------------------------------------------
 
-function formatRelative(iso: string, now: Date): string {
+function formatRelative(iso: string | null, now: Date): string {
+  if (!iso) return '—';
   const diffMs = now.getTime() - new Date(iso).getTime();
   const diffSec = Math.floor(diffMs / 1000);
   if (diffSec < 60) return `${diffSec}s ago`;

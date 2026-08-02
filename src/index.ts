@@ -22,7 +22,9 @@ import { createEventsCommand } from './bot/commands/events.js';
 import { createMytableCommand } from './bot/commands/mytable.js';
 import { createNewCommand } from './bot/commands/new.js';
 import { createAdminCommand } from './bot/commands/admin.js';
+import { createWatchingCommand } from './bot/commands/watching.js';
 import { createEventWatcher } from './bot/services/event-watcher.js';
+import { createEventWatchManager } from './bot/services/event-watch-manager.js';
 import { createInlineQueryHandler } from './bot/inline-query.js';
 import { createCardActionHandler } from './bot/actions/callbacks.js';
 import { createNewActionHandler } from './bot/actions/new-callback.js';
@@ -98,10 +100,23 @@ async function main() {
   });
 
   // Build the event watcher service (background polling)
-  const notify = async (telegramId: number, body: string): Promise<void> => {
+  const notify = async (
+    telegramId: number,
+    notification: { body: string; eventId: number; revision: string; canStop: boolean },
+  ): Promise<void> => {
     // Watcher text includes upstream player names. Send it as plain text so
     // a name containing Telegram markup cannot break delivery.
-    await bot.telegram.sendMessage(telegramId, body);
+    const buttons = [[
+      { text: '\uD83D\uDCC5 View event', callback_data: `event:${notification.eventId}` },
+    ]];
+    if (notification.canStop) {
+      buttons.push([
+        { text: '\uD83D\uDED1 Stop watching', callback_data: `watch:stop:${notification.revision}` },
+      ]);
+    }
+    await bot.telegram.sendMessage(telegramId, notification.body, {
+      reply_markup: { inline_keyboard: buttons },
+    });
   };
   const eventWatcher = createEventWatcher({
     watchRepository: eventWatchRepository,
@@ -109,6 +124,18 @@ async function main() {
     defaultLocation,
     notify,
     intervalMs: config.nexusWatcherIntervalMs,
+  });
+  const watchManager = createEventWatchManager({
+    watchRepository: eventWatchRepository,
+    eventRepository,
+    defaultLocation,
+    ...(config.nexusWatcherEnabled ? {
+      onWatchChanged: () => {
+        eventWatcher.tick().catch((error) => {
+          console.error('[event-watcher] immediate watch poll failed', error);
+        });
+      },
+    } : {}),
   });
 
   bot.use((ctx, next) => {
@@ -134,6 +161,7 @@ async function main() {
     { command: 'card', description: 'Look up a card by name or ID' },
     { command: 'random', description: 'Get a random card' },
     { command: 'events', description: 'Upcoming events near your saved location' },
+    { command: 'watching', description: 'See and manage your active event watch' },
     { command: 'mytable', description: 'See your current Nexus pairing' },
     { command: 'new', description: 'Cards spoiled today (UTC)' },
     { command: 'admin', description: 'Manage active event watches' },
@@ -152,7 +180,7 @@ async function main() {
       defaultLocation,
       defaultRadiusKm: config.eventsRadiusKm,
       daysAhead: config.eventsDaysAhead,
-      watchRepository: eventWatchRepository,
+      watchManager,
     }),
   );
   bot.command(
@@ -164,9 +192,16 @@ async function main() {
   );
   bot.command('new', createNewCommand({ cardRepository }));
   bot.command(
+    'watching',
+    createWatchingCommand({
+      watchManager,
+      daysAhead: config.eventsDaysAhead,
+    }),
+  );
+  bot.command(
     'admin',
     createAdminCommand({
-      watchRepository: eventWatchRepository,
+      watchManager,
       adminTelegramIds: config.adminTelegramIds,
     }),
   );
@@ -188,10 +223,10 @@ async function main() {
   bot.action(/^card:(.+)$/, createCardActionHandler({ cardRepository }));
   bot.action('new:show-all', createNewActionHandler({ cardRepository }));
   bot.action(
-    /^(event:.+|admin:stop:\d+)$/,
+    /^(event:.+|watch:.+|admin:stop:\d+:.+)$/,
     createEventActionHandler({
       eventRepository,
-      watchRepository: eventWatchRepository,
+      watchManager,
       userSettingsRepository,
       eventListingRepository,
       defaultLocation,

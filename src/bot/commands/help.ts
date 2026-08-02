@@ -20,9 +20,10 @@ export function createHelpCommand() {
         '  /events 14 — Next 14 days',
         '  /events — Pick a time window (1d, 3d, 5d, 1 week). Also /events 14 for any other positive N,',
         '  /events clear — Forget your saved location',
-        '  /events unwatch — Stop watching the current event',
         'Detail card: tap an event to see Scoreboard, All tables, and (in private chat) Watch.',
-        'Watch flow: /events → tap event → Watch → pick a participant → receive DMs on pairing changes and submitted scores.',
+        'Watch flow: /events → tap event → Watch → pick a participant → receive DMs on every pairing and result update.',
+        '/watching — See your active watch, refresh it, change it, or stop it.',
+        '/watching stop — Stop your active watch.',
         '',
         '🃏 Nexus pairing',
         '/mytable — See your current Nexus pairing.',
@@ -40,7 +41,7 @@ export function createHelpCommand() {
         '💬 Inline query',
         'In any chat, type @<bot-username> <card name> to share a card preview inline.',
         '',
-        'Settings (per-user): location via /events set, Nexus username via /mytable set, event watches via /events Watch.',
+        'Settings (per-user): location via /events set, Nexus username via /mytable set, event watches via /watching.',
       ].join('\n'),
     );
   };
