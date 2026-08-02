@@ -17,16 +17,22 @@ export interface EventPairing {
   readonly score1: number | null;
   readonly score2: number | null;
   readonly isBye: boolean;
+  readonly status: string;
+  readonly outcome: 'pending' | 'win' | 'draw' | 'loss' | 'conflict' | 'bye' | 'unavailable';
+  readonly winner: string | null;
+  readonly drawType: 'intentional' | 'unintentional' | null;
+  readonly gamesDrawn: number;
 }
 
 export interface EventStanding {
   readonly rank: number;
   readonly name: string;            // player.best_identifier (== standings[].player.best_identifier)
-  readonly wins: number;
-  readonly losses: number;
-  readonly draws: number;
-  readonly matchPoints: number;
+  readonly roundNumber: number;
   readonly matchRecord: string;      // "W-L-D"
+  readonly points: number;
+  readonly opponentMatchWinPercentage: number;
+  readonly gameWinPercentage: number;
+  readonly opponentGameWinPercentage: number;
 }
 
 export interface EventDetail {

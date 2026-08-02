@@ -2,17 +2,13 @@
 // subsystem, talking to the official Riftbound V2 API
 // (https://api.riftbound.uvsgames.com/api/v2, public, no auth).
 //
-// Implements IEventRepository (list / detail / registrations) plus
-// getEventDetail, the live per-event bundle that replaced the locator
-// HTML scraping: event + registrations in parallel, then the current
-// round's pairings and standings.
-//
-// Wire format: snake_case JSON, page-based pagination via
-// `next_page_number` (a bare page number, not a URL). All responses
-// are Zod-validated before mapping.
+// Implements IEventRepository (detail / registrations / live data) and
+// IEventListingRepository (listings). All responses are Zod-validated.
 
 import { z } from 'zod';
 import { EventLocation, IEventRepository } from '../../core/ports/event-repository.js';
+import { IEventListingRepository } from '../../core/ports/event-listing-repository.js';
+import { EventListing, normalizeEventMode } from '../../core/entities/event-listing.js';
 import { Event, EventPhaseSummary, EventRoundSummary } from '../../core/entities/event.js';
 import { EventRegistration } from '../../core/entities/event-registration.js';
 import { EventDetail, EventPairing, EventStanding } from '../../core/entities/event-detail.js';
@@ -59,12 +55,7 @@ const PhaseSchema = z.object({
 const EventListItemSchema = z.object({
   id: z.number(),
   name: z.string(),
-  // Unknown future statuses degrade to 'upcoming' instead of breaking
-  // the whole list (the upstream has shipped new values before).
   display_status: z.enum(['upcoming', 'inProgress', 'complete']).catch('upcoming'),
-  // The upstream emits nulls for several string fields on real events
-  // (verified: event_format null in 77/132 US events, timezone null in
-  // 4/132); the entity models them as non-null strings, so coerce.
   event_status: z.string().nullable().transform((v) => v ?? ''),
   start_datetime: z.string(),
   end_datetime: z.string(),
@@ -86,8 +77,6 @@ const EventListItemSchema = z.object({
   tournament_phases: z.array(PhaseSchema).default([]),
 });
 
-// Detail responses carry the same fields plus the full phase tree;
-// the list schema already tolerates phases, so one schema covers both.
 const EventDetailSchema = EventListItemSchema;
 
 const EventListResponseSchema = z.object({
@@ -151,7 +140,12 @@ const MatchSchema = z.object({
   status: z.string(),
   games_won_by_winner: z.number().nullable().default(null),
   games_won_by_loser: z.number().nullable().default(null),
+  games_drawn: z.number().nullable().default(0),
   match_is_bye: z.boolean(),
+  match_is_intentional_draw: z.boolean().default(false),
+  match_is_unintentional_draw: z.boolean().default(false),
+  match_is_loss: z.boolean().default(false),
+  reports_are_in_conflict: z.boolean().default(false),
   winning_player: z.number().nullable().default(null),
   player_match_relationships: z.array(PlayerMatchRelationshipSchema),
 });
@@ -168,6 +162,10 @@ const StandingSchema = z.object({
   round_number: z.number(),
   match_record: z.string(),
   match_points: z.number(),
+  points: z.number(),
+  opponent_match_win_percentage: z.number(),
+  game_win_percentage: z.number(),
+  opponent_game_win_percentage: z.number(),
   player: PlayerSchema,
   user_event_status: UserEventStatusSchema,
 });
@@ -179,7 +177,7 @@ const StandingsResponseSchema = z.object({
 });
 
 // ---------------------------------------------------------------------------
-// Mappers (pure, local to this file)
+// Mappers
 // ---------------------------------------------------------------------------
 
 function mapV2PhaseToSummary(api: z.infer<typeof PhaseSchema>): EventPhaseSummary {
@@ -237,13 +235,25 @@ function mapV2EventToEvent(api: z.infer<typeof EventDetailSchema>): Event {
   };
 }
 
+function mapV2EventToEventListing(api: z.infer<typeof EventListItemSchema>): EventListing {
+  return {
+    id: api.id,
+    name: api.name,
+    startDatetime: api.start_datetime,
+    endDatetime: api.end_datetime,
+    mode: normalizeEventMode(api.event_type),
+    storeName: api.store.name,
+    registeredCount: api.registered_user_count,
+    capacity: api.capacity,
+  };
+}
+
 function mapV2RegistrationToEventRegistration(
   api: z.infer<typeof RegistrationSchema>,
 ): EventRegistration {
   return {
+    id: api.id,
     name: api.best_identifier,
-    // The upstream marks active players 'COMPLETE'; every other
-    // registration state is treated as dropped for the roster UI.
     status: api.registration_status === 'COMPLETE' ? 'Active' : 'Dropped',
     profileImageUrl: api.full_profile_picture_url,
     matchesWon: api.matches_won,
@@ -258,30 +268,61 @@ function mapV2MatchToPairing(api: z.infer<typeof MatchSchema>): EventPairing {
   const rels = [...api.player_match_relationships].sort(
     (a, b) => (a.player_order ?? 0) - (b.player_order ?? 0),
   );
+  const player1 = rels[0]?.user_event_status.best_identifier ?? '';
+  const player2 = rels[1]?.user_event_status.best_identifier ?? '';
+  const winnerRel = api.winning_player == null
+    ? undefined
+    : rels.find((rel) => rel.player.id === api.winning_player);
+  const winner = winnerRel?.user_event_status.best_identifier ?? null;
+  const drawType = api.match_is_intentional_draw
+    ? 'intentional'
+    : api.match_is_unintentional_draw
+      ? 'unintentional'
+      : null;
+
+  let outcome: EventPairing['outcome'];
+  if (api.match_is_bye) {
+    outcome = 'bye';
+  } else if (api.reports_are_in_conflict) {
+    outcome = 'conflict';
+  } else if (api.status !== 'COMPLETE') {
+    outcome = 'pending';
+  } else if (drawType !== null || (api.games_drawn ?? 0) > 0) {
+    outcome = 'draw';
+  } else if (api.winning_player != null) {
+    outcome = 'win';
+  } else if (api.match_is_loss) {
+    outcome = 'loss';
+  } else {
+    outcome = 'unavailable';
+  }
 
   let score1: number | null = null;
   let score2: number | null = null;
-  // Only completed matches carry scores; attribute the winner's game
-  // count to whichever side winning_player identifies.
   if (
-    api.status === 'COMPLETE' &&
-    api.winning_player != null &&
+    outcome === 'win' &&
+    winnerRel != null &&
     api.games_won_by_winner != null &&
     api.games_won_by_loser != null &&
     rels.length >= 2
   ) {
-    const winnerIsFirst = api.winning_player === rels[0]!.player.id;
+    const winnerIsFirst = winnerRel === rels[0];
     score1 = winnerIsFirst ? api.games_won_by_winner : api.games_won_by_loser;
     score2 = winnerIsFirst ? api.games_won_by_loser : api.games_won_by_winner;
   }
 
   return {
     tableNumber: api.table_number,
-    player1: rels[0]?.user_event_status.best_identifier ?? '',
-    player2: rels[1]?.user_event_status.best_identifier ?? '',
+    player1,
+    player2,
     score1,
     score2,
     isBye: api.match_is_bye,
+    status: api.status,
+    outcome,
+    winner,
+    drawType,
+    gamesDrawn: api.games_drawn ?? 0,
   };
 }
 
@@ -291,24 +332,19 @@ function mapV2StandingToLeaderboardEntry(
   return {
     rank: api.rank,
     name: api.player.best_identifier,
-    wins: api.user_event_status.matches_won,
-    losses: api.user_event_status.matches_lost,
-    draws: api.user_event_status.matches_drawn,
-    matchPoints: api.match_points,
+    roundNumber: api.round_number,
     matchRecord: api.match_record,
+    points: api.points,
+    opponentMatchWinPercentage: api.opponent_match_win_percentage,
+    gameWinPercentage: api.game_win_percentage,
+    opponentGameWinPercentage: api.opponent_game_win_percentage,
   };
 }
 
 // ---------------------------------------------------------------------------
-// currentRound derivation
+// Current round derivation
 // ---------------------------------------------------------------------------
 
-// Scan the event's rounds in (orderInPhases desc, roundNumber desc)
-// order. The "current" round is the first IN_PROGRESS one; else the
-// first PENDING one; else the last COMPLETE one (the earliest round,
-// which is what a fully-completed event's capture resolves to); else
-// null. The watcher relies on this ordering to clear its snapshot
-// when a round ends.
 function deriveCurrentRound(event: Event): EventRoundSummary | null {
   const rounds: EventRoundSummary[] = [];
   const phaseOrder = new Map<number, number>();
@@ -330,15 +366,11 @@ function deriveCurrentRound(event: Event): EventRoundSummary | null {
   for (const round of rounds) {
     if (round.status === 'PENDING') return round;
   }
-  for (let i = rounds.length - 1; i >= 0; i--) {
-    if (rounds[i]!.status === 'COMPLETE') return rounds[i]!;
+  for (const round of rounds) {
+    if (round.status === 'COMPLETE') return round;
   }
   return null;
 }
-
-// ---------------------------------------------------------------------------
-// Adapter options
-// ---------------------------------------------------------------------------
 
 interface RiftboundV2AdapterOptions {
   baseUrl: string;
@@ -346,24 +378,16 @@ interface RiftboundV2AdapterOptions {
   retryAttempts: number;
 }
 
-// ---------------------------------------------------------------------------
-// Cache (30s TTL, max 50 entries — same shape as the old locator cache)
-// ---------------------------------------------------------------------------
-
 const CACHE_TTL_MS = 30_000;
 const MAX_CACHE_SIZE = 50;
-const MAX_PAGES = 20; // safety cap on pagination loops
+const MAX_PAGES = 20;
 
 interface CacheEntry {
   data: EventDetail;
   expiresAt: number;
 }
 
-// ---------------------------------------------------------------------------
-// Adapter
-// ---------------------------------------------------------------------------
-
-export class RiftboundV2Adapter implements IEventRepository {
+export class RiftboundV2Adapter implements IEventRepository, IEventListingRepository {
   private readonly baseUrl: string;
   private readonly timeoutMs: number;
   private readonly retryAttempts: number;
@@ -382,8 +406,6 @@ export class RiftboundV2Adapter implements IEventRepository {
     return url.toString();
   }
 
-  /** GET a single JSON resource. 404 → `{ status: 404, json: null }`.
-   *  Transient network failures and timeouts become domain errors. */
   private async request(
     path: string,
     queryParams: URLSearchParams,
@@ -399,9 +421,6 @@ export class RiftboundV2Adapter implements IEventRepository {
     } catch (error) {
       if (error instanceof DomainError) throw error;
       console.error(`[Riftbound V2] ${path} error:`, error);
-      if (error instanceof Error && error.name === 'AbortError') {
-        throw new ApiTimeoutError('Riftbound V2');
-      }
       throw new ApiTimeoutError('Riftbound V2');
     }
   }
@@ -418,9 +437,6 @@ export class RiftboundV2Adapter implements IEventRepository {
     }
   }
 
-  /** Follow `next_page_number` until exhausted, concatenating results.
-   *  A 404 means "no data here" (no registrations / no pairings yet)
-   *  and yields an empty array. */
   private async fetchPaginated<T>(
     path: string,
     params: URLSearchParams,
@@ -450,7 +466,7 @@ export class RiftboundV2Adapter implements IEventRepository {
     startAfter: Date,
     startBefore: Date,
     location: EventLocation,
-  ): Promise<Event[]> {
+  ): Promise<EventListing[]> {
     const params = new URLSearchParams();
     params.set('start_date_after', startAfter.toISOString());
     params.set('start_date_before', startBefore.toISOString());
@@ -463,18 +479,11 @@ export class RiftboundV2Adapter implements IEventRepository {
     params.set('upcoming_only', 'false');
     params.set('page_size', '25');
 
-    const items = await this.fetchPaginated(
-      '/events/',
-      params,
-      EventListResponseSchema,
-    );
-    return items.map(mapV2EventToEvent);
+    const items = await this.fetchPaginated('/events/', params, EventListResponseSchema);
+    return items.map(mapV2EventToEventListing);
   }
 
-  async getEventById(
-    id: number,
-    _location: EventLocation,
-  ): Promise<Event | null> {
+  async getEventById(id: number, _location: EventLocation): Promise<Event | null> {
     const { status, json } = await this.request(`/events/${id}/`, new URLSearchParams());
     if (status === 404) return null;
     if (status !== 200) throw new ApiResponseError('Riftbound V2', status);
@@ -502,15 +511,9 @@ export class RiftboundV2Adapter implements IEventRepository {
     location: EventLocation,
     options?: { fresh?: boolean },
   ): Promise<EventDetail | null> {
-    // Watcher tick path: bypass the in-adapter cache so a round
-    // transition the upstream just published is observed immediately
-    // instead of after up to CACHE_TTL_MS. Also skip the write to
-    // avoid holding a stale snapshot for the next caller.
     if (options?.fresh !== true) {
       const cached = this.cache.get(id);
-      if (cached && cached.expiresAt > Date.now()) {
-        return cached.data;
-      }
+      if (cached && cached.expiresAt > Date.now()) return cached.data;
     }
 
     const event = await this.getEventById(id, location);
@@ -555,9 +558,6 @@ export class RiftboundV2Adapter implements IEventRepository {
   }
 
   async getEventMatches(roundId: number): Promise<EventPairing[]> {
-    // The matches endpoint is round-scoped, not event-scoped. The
-    // port takes only the roundId; the handler resolves the round
-    // from the event detail's tournament_phases.
     const matches = await this.fetchPaginated(
       `/tournament-rounds/${roundId}/matches/paginated/`,
       new URLSearchParams({ page_size: '10', avoid_cache: 'true' }),

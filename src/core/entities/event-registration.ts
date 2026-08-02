@@ -7,6 +7,7 @@
 // construction.
 
 export interface EventRegistration {
+  readonly id: number;
   readonly name: string;             // best_identifier
   readonly status: 'Active' | 'Dropped' | string;  // 'COMPLETE' → Active; anything else → Dropped
   readonly profileImageUrl: string | null;

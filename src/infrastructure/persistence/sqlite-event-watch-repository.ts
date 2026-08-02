@@ -56,10 +56,14 @@ export class SqliteEventWatchRepository implements IEventWatchRepository {
         (telegram_id, event_id, event_name, event_username, created_at, updated_at)
        VALUES (?, ?, ?, ?, ?, ?)
        ON CONFLICT(telegram_id) DO UPDATE SET
-        event_id       = excluded.event_id,
-        event_name     = excluded.event_name,
-        event_username = excluded.event_username,
-        updated_at     = excluded.updated_at`,
+        event_id         = excluded.event_id,
+        event_name       = excluded.event_name,
+        event_username   = excluded.event_username,
+        last_seen_round  = NULL,
+        last_seen_table  = NULL,
+        last_seen_opponent = NULL,
+        last_seen_result = NULL,
+        updated_at       = excluded.updated_at`,
     );
     this.deleteStmt = db.prepare(
       'DELETE FROM user_event_watches WHERE telegram_id = ?',

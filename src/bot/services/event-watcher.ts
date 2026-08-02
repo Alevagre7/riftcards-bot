@@ -9,9 +9,9 @@
 
 import { IEventWatchRepository } from '../../core/ports/event-watch-repository.js';
 import { IEventRepository, EventLocation } from '../../core/ports/event-repository.js';
-import { EventDetail } from '../../core/entities/event-detail.js';
+import { EventDetail, EventPairing } from '../../core/entities/event-detail.js';
 import { ApiResponseError, ApiTimeoutError } from '../../core/errors/index.js';
-import { detectPairingChange, ChangeReason } from './event-watcher-diff.js';
+import { detectPairingChange, pairingToResult, ChangeReason } from './event-watcher-diff.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -55,56 +55,53 @@ function getOpponent(pairing: { player1: string; player2: string }, username: st
 /** Build a human-readable notification body from the diff reasons. */
 function buildNotifyBody(
   reasons: readonly ChangeReason[],
-  pairing: { tableNumber: number; player1: string; player2: string; score1: number | null; score2: number | null },
+  pairing: EventPairing,
   round: number | null,
   username: string,
 ): string {
   const opponent = getOpponent(pairing, username);
   const lines: string[] = [];
+  const hasRoundChange = reasons.some(
+    (reason) => reason === 'new-round' || reason === 'round-changed',
+  );
+  const hasPairingChange = reasons.some(
+    (reason) => reason === 'opponent-changed' || reason === 'table-changed',
+  );
+  const hasResultChange = reasons.some(
+    (reason) => reason === 'result-submitted' || reason === 'result-changed',
+  );
 
-  for (const reason of reasons) {
-    switch (reason) {
-      case 'new-round':
-      case 'round-changed':
-        lines.push(
-          `\uD83C\uDD95 Round ${round} — Table ${pairing.tableNumber}: You vs ${opponent}`,
-        );
-        break;
-      case 'opponent-changed':
-      case 'table-changed':
-        lines.push(
-          `\uD83D\uDD04 Round ${round} pairing changed — Table ${pairing.tableNumber}: You vs ${opponent}`,
-        );
-        break;
-      case 'result-submitted':
-      case 'result-changed': {
-        const resultLabel = formatResult(pairing, username);
-        lines.push(
-          `\uD83D\uDCDD Round ${round} result: ${resultLabel} vs ${opponent}`,
-        );
-        break;
-      }
-    }
+  if (hasRoundChange) {
+    lines.push(
+      `\uD83C\uDD95 Round ${round} \u2014 Table ${pairing.tableNumber}: You vs ${opponent}`,
+    );
+  } else if (hasPairingChange) {
+    lines.push(
+      `\uD83D\uDD04 Round ${round} pairing changed \u2014 Table ${pairing.tableNumber}: You vs ${opponent}`,
+    );
+  }
+  if (hasResultChange) {
+    lines.push(
+      `\uD83D\uDCDD Round ${round} result: ${formatResult(pairing, username)} vs ${opponent}`,
+    );
   }
 
   return lines.join('\n');
 }
 
-function formatResult(
-  pairing: { player1: string; player2: string; score1: number | null; score2: number | null },
-  username: string,
-): string {
-  if (pairing.score1 === null || pairing.score2 === null) return 'not reported';
-
-  const isPlayer1 = pairing.player1 === username;
-
-  // Determine result from the user's perspective
-  if ((isPlayer1 && pairing.score1 > pairing.score2) ||
-      (!isPlayer1 && pairing.score2 > pairing.score1)) {
-    return 'Win';
+function formatResult(pairing: EventPairing, username: string): string {
+  switch (pairingToResult(pairing, username)) {
+    case 'win':
+      return 'Win';
+    case 'loss':
+      return 'Loss';
+    case 'draw':
+      return 'Draw';
+    case 'bye':
+      return 'Bye';
+    default:
+      return 'not reported';
   }
-  if (pairing.score1 === pairing.score2) return 'Draw';
-  return 'Loss';
 }
 
 // ---------------------------------------------------------------------------
@@ -114,8 +111,9 @@ function formatResult(
 export function createEventWatcher(deps: EventWatcherDeps): EventWatcher {
   const log = deps.logger ?? console.error;
   let timer: ReturnType<typeof setInterval> | null = null;
+  let inFlight: Promise<void> | null = null;
 
-  async function tick(): Promise<void> {
+  async function runTick(): Promise<void> {
     const watches = await deps.watchRepository.list();
     if (watches.length === 0) return;
 
@@ -190,6 +188,13 @@ export function createEventWatcher(deps: EventWatcherDeps): EventWatcher {
 
     log(`[event-watcher] tick done`);
   }
+  function tick(): Promise<void> {
+    if (inFlight !== null) return inFlight;
+    inFlight = runTick().finally(() => {
+      inFlight = null;
+    });
+    return inFlight;
+  }
 
   async function processWatch(
     watch: Awaited<ReturnType<typeof deps.watchRepository.list>>[number],
@@ -246,9 +251,7 @@ export function createEventWatcher(deps: EventWatcherDeps): EventWatcher {
 
       // Notify succeeded — update snapshot
       const opponent = getOpponent(pairing, watch.eventUsername);
-      const resultType = (pairing.score1 !== null && pairing.score2 !== null)
-        ? formatResult(pairing, watch.eventUsername).toLowerCase() as 'win' | 'loss' | 'draw'
-        : null;
+      const resultType = pairingToResult(pairing, watch.eventUsername);
 
       await deps.watchRepository.updateLastSeen(watch.telegramId, {
         round: currentRoundNumber,

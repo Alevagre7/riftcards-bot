@@ -19,6 +19,11 @@ function rankLabel(rank: number): string {
   return `#${rank}`;
 }
 
+const percentFmt = new Intl.NumberFormat('en-GB', {
+  style: 'percent',
+  maximumFractionDigits: 1,
+});
+
 export function formatEventLeaderboard(data: LeaderboardData): string {
   const lines: string[] = [];
 
@@ -34,7 +39,10 @@ export function formatEventLeaderboard(data: LeaderboardData): string {
 
   for (const entry of data.standings) {
     lines.push(
-      `${rankLabel(entry.rank)} <b>${escapeHtml(entry.name)}</b> \u2014 <b>${entry.wins}-${entry.losses}</b> \u00B7 <i>${entry.matchPoints} pts</i>`,
+      `${rankLabel(entry.rank)} <b>${escapeHtml(entry.name)}</b> \u2014 <b>${escapeHtml(entry.matchRecord)}</b> \u00B7 <i>${entry.points} pts</i>`,
+    );
+    lines.push(
+      `   OMW ${percentFmt.format(entry.opponentMatchWinPercentage)} \u00B7 GW ${percentFmt.format(entry.gameWinPercentage)} \u00B7 OGW ${percentFmt.format(entry.opponentGameWinPercentage)}`,
     );
   }
 

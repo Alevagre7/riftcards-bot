@@ -38,8 +38,8 @@ const baseEvent: Event = {
 };
 
 const registrations: EventRegistration[] = [
-  { name: 'Alice', status: 'Active', profileImageUrl: null, matchesWon: 2, matchesLost: 1, matchesDrawn: 0, isGuest: false, finalPlaceInStandings: 3 },
-  { name: 'Bob', status: 'Dropped', profileImageUrl: null, matchesWon: 0, matchesLost: 0, matchesDrawn: 0, isGuest: false, finalPlaceInStandings: null },
+  { id: 1, name: 'Alice', status: 'Active', profileImageUrl: null, matchesWon: 2, matchesLost: 1, matchesDrawn: 0, isGuest: false, finalPlaceInStandings: 3 },
+  { id: 2, name: 'Bob', status: 'Dropped', profileImageUrl: null, matchesWon: 0, matchesLost: 0, matchesDrawn: 0, isGuest: false, finalPlaceInStandings: null },
 ];
 
 describe('formatEventDetail', () => {
@@ -171,13 +171,25 @@ describe('formatEventDetail', () => {
     expect(texts).toContain('\uD83D\uDC41 Watch');
   });
 
-  it('shows Watch button without Leaderboard when isStarted is false and privateChat', () => {
+  it('shows Watch for an upcoming event even when isStarted is false', () => {
     const result = formatEventDetail(baseEvent, [], { privateChat: true, isStarted: false });
     const texts = result.buttons.flat().map((b) => b.text);
     expect(texts).not.toContain('\uD83C\uDFC6 Leaderboard');
     expect(texts).not.toContain('\uD83D\uDCCB All tables');
     expect(texts).toContain('\uD83D\uDC41 Watch');
     expect(texts).toContain('\u2190 Back to list');
+  });
+
+  it('omits Watch for completed events while retaining completed-event views', () => {
+    const result = formatEventDetail(
+      { ...baseEvent, displayStatus: 'complete' },
+      [],
+      { privateChat: true },
+    );
+    const texts = result.buttons.flat().map((b) => b.text);
+    expect(texts).not.toContain('\uD83D\uDC41 Watch');
+    expect(texts).toContain('\uD83C\uDFC6 Leaderboard');
+    expect(texts).toContain('\uD83D\uDCCB All tables');
   });
 
   it('includes Watch button in private chat', () => {

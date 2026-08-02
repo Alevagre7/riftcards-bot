@@ -122,15 +122,15 @@ describe('RiftboundV2Adapter.getEvents', () => {
     expect(u.searchParams.get('upcoming_only')).toBe('false');
   });
 
-  it('maps display_status upcoming and inProgress to the entity', async () => {
+  it('maps list fields and normalizes official event modes', async () => {
     const list = loadFixture('v2-events-list.json') as {
       results: Array<Record<string, unknown>>;
     };
     const modified = {
       ...list,
       results: [
-        list.results[0]!,
-        { ...list.results[1]!, display_status: 'inProgress' },
+        { ...list.results[0]!, event_type: 'Summoner Skirmish' },
+        { ...list.results[1]!, event_type: 'Nexus Night', display_status: 'inProgress' },
       ],
     };
     fetchSpy.mockResolvedValue(jsonResponse(modified));
@@ -142,41 +142,25 @@ describe('RiftboundV2Adapter.getEvents', () => {
     );
 
     expect(events).toHaveLength(2);
-    expect(events[0]!.displayStatus).toBe('upcoming');
-    expect(events[1]!.displayStatus).toBe('inProgress');
-
-    // Field mapping against the real capture
-    const ev = events[0]!;
-    expect(ev.id).toBe(800104);
-    expect(ev.name).toBe('Torneo Semanal - La Cueva Roja Nexus Night');
-    expect(ev.startDatetime).toBe('2026-07-31T15:00:00+00:00');
-    expect(ev.endDatetime).toBe('2026-07-31T20:00:00+00:00');
-    expect(ev.timezone).toBe('Europe/Madrid');
-    expect(ev.store.name).toBe('La Cueva Roja');
-    // List items carry no store timezone → mapped to null
-    expect(ev.store.timezone).toBeNull();
-    expect(ev.store.country).toBe('ES');
-    expect(ev.gameplayFormatName).toBe('Constructed');
-    expect(ev.registeredCount).toBe(5);
-    expect(ev.capacity).toBe(40);
-    expect(ev.eventType).toBe('LOCALS');
-    expect(ev.costInCents).toBe(0);
-    expect(ev.tournamentPhases).toHaveLength(1);
+    expect(events[0]!.mode).toBe('Skirmish');
+    expect(events[1]!.mode).toBe('Nexus Night');
+    expect(events[0]!.id).toBe(800104);
+    expect(events[0]!.name).toBe('Torneo Semanal - La Cueva Roja Nexus Night');
+    expect(events[0]!.startDatetime).toBe('2026-07-31T15:00:00+00:00');
+    expect(events[0]!.endDatetime).toBe('2026-07-31T20:00:00+00:00');
+    expect(events[0]!.storeName).toBe('La Cueva Roja');
+    expect(events[0]!.registeredCount).toBe(5);
+    expect(events[0]!.capacity).toBe(40);
   });
 
-  it('coerces null event_format / timezone / display_status to the entity contract', async () => {
+  it('maps unknown official list modes to Other', async () => {
     const list = loadFixture('v2-events-list.json') as {
       results: Array<Record<string, unknown>>;
     };
-    const modified = {
+    fetchSpy.mockResolvedValue(jsonResponse({
       ...list,
-      results: [
-        { ...list.results[0]!, event_format: null, timezone: null },
-        // Unknown status value — must degrade, not throw.
-        { ...list.results[1]!, display_status: 'cancelled' },
-      ],
-    };
-    fetchSpy.mockResolvedValue(jsonResponse(modified));
+      results: [{ ...list.results[0]!, event_type: 'LOCALS', display_status: 'cancelled' }],
+    }));
 
     const events = await adapter.getEvents(
       new Date('2026-07-30T00:00:00.000Z'),
@@ -184,10 +168,31 @@ describe('RiftboundV2Adapter.getEvents', () => {
       baseLocation,
     );
 
-    expect(events).toHaveLength(2);
-    expect(events[0]!.eventFormat).toBe('');
-    expect(events[0]!.timezone).toBe('');
-    expect(events[1]!.displayStatus).toBe('upcoming');
+    expect(events[0]!.mode).toBe('Other');
+  });
+
+  it('does not expose official detail-only fields from list results', async () => {
+    const list = loadFixture('v2-events-list.json') as {
+      results: Array<Record<string, unknown>>;
+    };
+    fetchSpy.mockResolvedValue(jsonResponse(list));
+
+    const events = await adapter.getEvents(
+      new Date('2026-07-30T00:00:00.000Z'),
+      new Date('2026-08-06T00:00:00.000Z'),
+      baseLocation,
+    );
+
+    expect(events[0]).toEqual({
+      id: 800104,
+      name: 'Torneo Semanal - La Cueva Roja Nexus Night',
+      startDatetime: '2026-07-31T15:00:00+00:00',
+      endDatetime: '2026-07-31T20:00:00+00:00',
+      mode: 'Other',
+      storeName: 'La Cueva Roja',
+      registeredCount: 5,
+      capacity: 40,
+    });
   });
 });
 
@@ -346,13 +351,11 @@ describe('RiftboundV2Adapter.getEventDetail', () => {
 
     const detail = await adapter.getEventDetail(799609, baseLocation);
 
-    expect(detail).not.toBeNull();
-    expect(detail!.event.id).toBe(799609);
-    // All rounds COMPLETE → derivation picks the last COMPLETE in the
-    // (orderInPhases desc, roundNumber desc) scan = the earliest round.
+    // All rounds COMPLETE → derivation picks the latest COMPLETE in the
+    // descending (orderInPhases, roundNumber) scan.
     expect(detail!.currentRound).not.toBeNull();
-    expect(detail!.currentRound!.id).toBe(1172657);
-    expect(detail!.currentRound!.roundNumber).toBe(1);
+    expect(detail!.currentRound!.id).toBe(1172659);
+    expect(detail!.currentRound!.roundNumber).toBe(3);
     expect(detail!.currentRound!.status).toBe('COMPLETE');
     expect(detail!.registrations).toHaveLength(11);
     // 6 captured matches minus the single bye
@@ -460,8 +463,31 @@ describe('RiftboundV2Adapter.getEventDetail', () => {
     expect(pending.score1).toBeNull();
     expect(pending.score2).toBeNull();
   });
+  it('maps an official intentional draw even when scores and winner are null', async () => {
+    const matches = loadFixture('v2-round-1172657-matches.json') as {
+      results: Array<Record<string, unknown>>;
+    };
+    matches.results[0] = {
+      ...matches.results[0],
+      status: 'COMPLETE',
+      winning_player: null,
+      match_is_intentional_draw: true,
+      match_is_unintentional_draw: false,
+      games_drawn: 0,
+      games_won_by_winner: null,
+      games_won_by_loser: null,
+    };
+    mockDetailRoutes(fetchSpy, { matches });
 
-  it('builds standings with the API rank preserved', async () => {
+    const detail = await adapter.getEventDetail(799609, baseLocation);
+    const draw = detail!.pairings.find((pairing) => pairing.tableNumber === 1)!;
+    expect(draw.outcome).toBe('draw');
+    expect(draw.drawType).toBe('intentional');
+    expect(draw.score1).toBeNull();
+    expect(draw.score2).toBeNull();
+  });
+
+  it('builds standings from selected-round records and tiebreakers', async () => {
     mockDetailRoutes(fetchSpy);
 
     const detail = await adapter.getEventDetail(799609, baseLocation);
@@ -469,11 +495,12 @@ describe('RiftboundV2Adapter.getEventDetail', () => {
     const first = detail!.standings[0]!;
     expect(first.rank).toBe(1);
     expect(first.name).toBe('Connor M');
-    expect(first.wins).toBe(2);
-    expect(first.losses).toBe(1);
-    expect(first.draws).toBe(0);
-    expect(first.matchPoints).toBe(3);
+    expect(first.roundNumber).toBe(1);
     expect(first.matchRecord).toBe('1-0-0');
+    expect(first.points).toBe(3);
+    expect(first.opponentMatchWinPercentage).toBe(0.33);
+    expect(first.gameWinPercentage).toBe(1);
+    expect(first.opponentGameWinPercentage).toBe(0.33);
   });
 
   it('returns empty pairings/standings when the event has no rounds', async () => {

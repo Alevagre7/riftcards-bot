@@ -1,10 +1,11 @@
 import { Context } from 'telegraf';
 import type { InlineKeyboardButton } from '@telegraf/types/markup.js';
 import { IEventRepository, EventLocation } from '../../core/ports/event-repository.js';
-import { IUserSettingsRepository } from '../../core/ports/user-settings-repository.js';
+import { IEventListingRepository } from '../../core/ports/event-listing-repository.js';
 import { IEventWatchRepository } from '../../core/ports/event-watch-repository.js';
-import { EventRegistration } from '../../core/entities/event-registration.js';
+import { IUserSettingsRepository } from '../../core/ports/user-settings-repository.js';
 import { EventRoundSummary } from '../../core/entities/event.js';
+import { EventRegistration } from '../../core/entities/event-registration.js';
 import { EventPairing, EventStanding } from '../../core/entities/event-detail.js';
 import { renderEventList, renderEventDetail, renderEventsPage } from '../commands/events.js';
 import { formatEventLeaderboard } from '../formatters/event-leaderboard-formatter.js';
@@ -14,6 +15,7 @@ import { escapeHtml } from '../formatters/card-formatter.js';
 
 interface EventActionDeps {
   eventRepository: IEventRepository;
+  eventListingRepository: IEventListingRepository;
   watchRepository: IEventWatchRepository;
   userSettingsRepository: IUserSettingsRepository;
   defaultLocation: EventLocation;
@@ -106,7 +108,6 @@ export function createEventActionHandler(deps: EventActionDeps) {
       );
       return;
     }
-
     // Watch: start picker
     const watchStartMatch = /^event:(\d+):watch:start$/.exec(data);
     if (watchStartMatch) {
@@ -114,15 +115,26 @@ export function createEventActionHandler(deps: EventActionDeps) {
       return;
     }
 
-    // Watch: select player from roster page:idx
-    const watchSelectMatch = /^event:(\d+):watch:(\d+):(\d+)$/.exec(data);
+    // Watch: roster page navigation
+    const watchPageMatch = /^event:(\d+):watch:page:(-?\d+)$/.exec(data);
+    if (watchPageMatch) {
+      await handleWatchPage(
+        ctx,
+        deps,
+        parseInt(watchPageMatch[1]!, 10),
+        parseInt(watchPageMatch[2]!, 10),
+      );
+      return;
+    }
+
+    // Watch: select player by stable registration id
+    const watchSelectMatch = /^event:(\d+):watch:select:(\d+)$/.exec(data);
     if (watchSelectMatch) {
       await handleWatchSelect(
         ctx,
         deps,
         parseInt(watchSelectMatch[1]!, 10),
         parseInt(watchSelectMatch[2]!, 10),
-        parseInt(watchSelectMatch[3]!, 10),
       );
       return;
     }
@@ -310,26 +322,50 @@ async function handleWatchStart(
   await sendRosterPage(ctx, data.event.id, data.registrations, 0);
 }
 
+async function handleWatchPage(
+  ctx: Context,
+  deps: EventActionDeps,
+  eventId: number,
+  page: number,
+): Promise<void> {
+  const data = await deps.eventRepository.getEventDetail(eventId, deps.defaultLocation);
+  if (!data) {
+    await ctx.answerCbQuery('Roster changed, please try again.', { show_alert: true });
+    return;
+  }
+  await sendRosterPage(ctx, data.event.id, data.registrations, page);
+}
+
 async function sendRosterPage(
   ctx: Context,
   eventId: number,
   roster: readonly EventRegistration[],
   page: number,
 ): Promise<void> {
+  const buttons: InlineKeyboardButton[][] = [];
+  if (roster.length === 0) {
+    buttons.push([{ text: '\u2190 Back to event', callback_data: `event:${eventId}` }]);
+    await ctx.editMessageText('No players available to watch yet.', {
+      reply_markup: { inline_keyboard: buttons },
+    });
+    return;
+  }
+
   const totalPages = Math.ceil(roster.length / NAMES_PER_PAGE);
+  if (page < 0 || page >= totalPages) {
+    await ctx.answerCbQuery('Roster changed, please try again.', { show_alert: true });
+    return;
+  }
+
   const start = page * NAMES_PER_PAGE;
   const pageEntries = roster.slice(start, start + NAMES_PER_PAGE);
-
   const lines: string[] = [`Select a player to watch (page ${page + 1}/${totalPages}):`];
-  const buttons: InlineKeyboardButton[][] = [];
 
-  for (let i = 0; i < pageEntries.length; i++) {
-    const entry = pageEntries[i]!;
-    const idx = start + i;
+  for (const entry of pageEntries) {
     buttons.push([
       {
         text: `${entry.name} (${entry.status})`,
-        callback_data: `event:${eventId}:watch:${page}:${idx}`,
+        callback_data: `event:${eventId}:watch:select:${entry.id}`,
       },
     ]);
   }
@@ -338,12 +374,11 @@ async function sendRosterPage(
     buttons.push([
       {
         text: 'Next \u203A',
-        callback_data: `event:${eventId}:watch:${page + 1}:0`,
+        callback_data: `event:${eventId}:watch:page:${page + 1}`,
       },
     ]);
   }
 
-  // Back button
   buttons.push([{ text: '\u2190 Back to event', callback_data: `event:${eventId}` }]);
 
   await ctx.editMessageText(lines.join('\n'), {
@@ -359,8 +394,7 @@ async function handleWatchSelect(
   ctx: Context,
   deps: EventActionDeps,
   eventId: number,
-  page: number,
-  idx: number,
+  registrationId: number,
 ): Promise<void> {
   const userId = ctx.from?.id;
   if (userId == null) {
@@ -374,7 +408,7 @@ async function handleWatchSelect(
     return;
   }
 
-  const rosterEntry = data.registrations[idx];
+  const rosterEntry = data.registrations.find((entry) => entry.id === registrationId);
   if (!rosterEntry) {
     await ctx.answerCbQuery('Roster changed, please try again.', { show_alert: true });
     return;

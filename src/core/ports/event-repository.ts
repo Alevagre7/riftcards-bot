@@ -16,16 +16,11 @@ export interface EventLocation {
 }
 
 export interface IEventRepository {
-  getEvents(
-    startAfter: Date,
-    startBefore: Date,
-    location: EventLocation,
-  ): Promise<Event[]>;
-
   getEventById(
     id: number,
     location: EventLocation,
   ): Promise<Event | null>;
+
 
   getEventRegistrations(
     id: number,

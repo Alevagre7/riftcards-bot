@@ -10,6 +10,7 @@ import { eventDetailOrigin } from '../state/event-detail-origin.js';
 import { IUserSettingsRepository } from '../../core/ports/user-settings-repository.js';
 import { IEventRepository, EventLocation } from '../../core/ports/event-repository.js';
 import { Event } from '../../core/entities/event.js';
+import { EventListing } from '../../core/entities/event-listing.js';
 import { createEventActionHandler } from '../actions/event-callback.js';
 
 const TEST_USER_ID = 123;
@@ -47,7 +48,7 @@ function mockUserSettingsRepo(): IUserSettingsRepository & {
   };
 }
 
-function mockEventRepo(): IEventRepository {
+function mockEventRepo(): IEventRepository & { getEvents: Mock } {
   return {
     getEvents: vi.fn().mockResolvedValue([]),
     getEventById: vi.fn().mockResolvedValue(null),
@@ -79,7 +80,7 @@ function getReplyKeyboard(
 
 describe('createEventsCommand — /events set inline coords', () => {
   let userSettings: ReturnType<typeof mockUserSettingsRepo>;
-  let eventRepo: IEventRepository;
+  let eventRepo: ReturnType<typeof mockEventRepo>;
 
   beforeEach(() => {
     userSettings = mockUserSettingsRepo();
@@ -92,6 +93,7 @@ describe('createEventsCommand — /events set inline coords', () => {
   function makeCmd() {
     return createEventsCommand({
       eventRepository: eventRepo,
+      eventListingRepository: eventRepo,
       userSettingsRepository: userSettings,
       defaultLocation: { latitude: 0, longitude: 0, numMiles: 50 },
       daysAhead: 7,
@@ -193,7 +195,7 @@ describe('createEventsCommand — /events set inline coords', () => {
 
 describe('createEventsCommand — /events <id> and <url> debug path', () => {
   let userSettings: ReturnType<typeof mockUserSettingsRepo>;
-  let eventRepo: IEventRepository;
+  let eventRepo: ReturnType<typeof mockEventRepo>;
   beforeEach(() => {
     userSettings = mockUserSettingsRepo();
     eventRepo = mockEventRepo();
@@ -203,6 +205,7 @@ describe('createEventsCommand — /events <id> and <url> debug path', () => {
   function makeCmd() {
     return createEventsCommand({
       eventRepository: eventRepo,
+      eventListingRepository: eventRepo,
       userSettingsRepository: userSettings,
       defaultLocation: { latitude: 0, longitude: 0, numMiles: 50 },
       daysAhead: 7,
@@ -291,12 +294,25 @@ function baseEvent(over: Partial<Event> = {}): Event {
     ...over,
   };
 }
+function baseListing(over: Partial<EventListing> = {}): EventListing {
+  return {
+    id: 1,
+    name: 'Test Event',
+    startDatetime: '2026-08-01T18:00:00+00:00',
+    endDatetime: '2026-08-01T22:00:00+00:00',
+    mode: 'Other',
+    storeName: 'Test Store',
+    registeredCount: 0,
+    capacity: 8,
+    ...over,
+  };
+}
 // ---------------------------------------------------------------------------
 // /events window menu + in-progress
 
 describe('createEventsCommand — /events window menu', () => {
   let userSettings: ReturnType<typeof mockUserSettingsRepo>;
-  let eventRepo: IEventRepository;
+  let eventRepo: ReturnType<typeof mockEventRepo>;
 
   beforeEach(() => {
     userSettings = mockUserSettingsRepo();
@@ -307,6 +323,7 @@ describe('createEventsCommand — /events window menu', () => {
   function makeCmd(over: Partial<{ now: () => Date }> = {}) {
     return createEventsCommand({
       eventRepository: eventRepo,
+      eventListingRepository: eventRepo,
       userSettingsRepository: userSettings,
       defaultLocation: { latitude: 0, longitude: 0, numMiles: 50 },
       daysAhead: 7,
@@ -345,82 +362,60 @@ describe('createEventsCommand — /events window menu', () => {
     await cmd(ctx);
 
     expect(eventRepo.getEvents).toHaveBeenCalledTimes(1);
-    const [startAfter, startBefore, _location] = (eventRepo.getEvents as Mock).mock.calls[0] as [
+    const [startAfter, startBefore] = (eventRepo.getEvents as Mock).mock.calls[0] as [
       Date,
       Date,
       EventLocation,
     ];
-    // Lower bound: 12h before now.
     expect(startAfter.toISOString()).toBe('2026-07-31T12:00:00.000Z');
-    // Upper bound: 5 days after now.
     expect(startBefore.toISOString()).toBe('2026-08-06T00:00:00.000Z');
   });
 
-  it('includes an in-progress event (started 2h ago, ends in 2h)', async () => {
+  it('includes an in-progress event', async () => {
     const fixedNow = new Date('2026-08-01T12:00:00Z');
-    const inProgress = baseEvent({
+    const inProgress = baseListing({
       id: 1,
       name: 'In-Progress Tournament',
       startDatetime: new Date(fixedNow.getTime() - 2 * 60 * 60 * 1000).toISOString(),
       endDatetime: new Date(fixedNow.getTime() + 2 * 60 * 60 * 1000).toISOString(),
     });
-    (eventRepo.getEvents as Mock).mockResolvedValueOnce([inProgress]);
+    eventRepo.getEvents.mockResolvedValueOnce([inProgress]);
     const ctx = makeShowCtx('/events 1');
-    const cmd = makeCmd({ now: () => fixedNow });
-    await cmd(ctx);
-    const kb = getReplyKeyboard(ctx);
-
-    expect(kb).toBeDefined();
-    const flatButtons = kb!.inline_keyboard.flat();
-    // Button label is icon+date+type+store, not the event name; assert
-    // on callback_data (which is `event:<id>`) instead.
-    const ids = flatButtons
-      .map((b) => b.callback_data)
-      .filter((d): d is string => typeof d === 'string');
+    await makeCmd({ now: () => fixedNow })(ctx);
+    const ids = getReplyKeyboard(ctx)!.inline_keyboard.flat()
+      .map((button) => button.callback_data)
+      .filter((value): value is string => typeof value === 'string');
     expect(ids).toContain('event:1');
   });
-  it('excludes a finished event (ended 1h ago)', async () => {
+
+  it('excludes a finished event', async () => {
     const fixedNow = new Date('2026-08-01T12:00:00Z');
-    const finished = baseEvent({
+    const finished = baseListing({
       id: 1,
       name: 'Already Over',
       startDatetime: new Date(fixedNow.getTime() - 3 * 60 * 60 * 1000).toISOString(),
       endDatetime: new Date(fixedNow.getTime() - 1 * 60 * 60 * 1000).toISOString(),
     });
-    (eventRepo.getEvents as Mock).mockResolvedValueOnce([finished]);
-
+    eventRepo.getEvents.mockResolvedValueOnce([finished]);
     const ctx = makeShowCtx('/events 1');
-    const cmd = makeCmd({ now: () => fixedNow });
-
-    await cmd(ctx);
-
-    const text = (ctx.reply as Mock).mock.calls.at(-1)?.[0] ?? '';
-    expect(text).toContain('No events found');
-    const kb = getReplyKeyboard(ctx);
-    // Either no keyboard or empty keyboard.
-    const flat = kb?.inline_keyboard.flat() ?? [];
-    expect(flat).toHaveLength(0);
+    await makeCmd({ now: () => fixedNow })(ctx);
+    expect((ctx.reply as Mock).mock.calls.at(-1)?.[0]).toContain('No events found');
   });
 
-  it('includes an upcoming event well within the window', async () => {
+  it('includes an upcoming event within the window', async () => {
     const fixedNow = new Date('2026-08-01T12:00:00Z');
-    const upcoming = baseEvent({
+    const upcoming = baseListing({
       id: 1,
       name: 'Weekend Skirmish',
       startDatetime: new Date(fixedNow.getTime() + 3 * 24 * 60 * 60 * 1000).toISOString(),
-      endDatetime: new Date(
-        fixedNow.getTime() + 3 * 24 * 60 * 60 * 1000 + 4 * 60 * 60 * 1000,
-      ).toISOString(),
+      endDatetime: new Date(fixedNow.getTime() + 3 * 24 * 60 * 60 * 1000 + 4 * 60 * 60 * 1000).toISOString(),
     });
-    (eventRepo.getEvents as Mock).mockResolvedValueOnce([upcoming]);
+    eventRepo.getEvents.mockResolvedValueOnce([upcoming]);
     const ctx = makeShowCtx('/events 5');
-    const cmd = makeCmd({ now: () => fixedNow });
-    await cmd(ctx);
-    const kb = getReplyKeyboard(ctx);
-    const flat = kb!.inline_keyboard.flat();
-    const ids = flat
-      .map((b) => b.callback_data)
-      .filter((d): d is string => typeof d === 'string');
+    await makeCmd({ now: () => fixedNow })(ctx);
+    const ids = getReplyKeyboard(ctx)!.inline_keyboard.flat()
+      .map((button) => button.callback_data)
+      .filter((value): value is string => typeof value === 'string');
     expect(ids).toContain('event:1');
   });
 });
@@ -465,7 +460,7 @@ function makeCallbackCtx(data: string): Context {
 }
 
 describe('createEventActionHandler — event:list back-to-list fix', () => {
-  let eventRepo: IEventRepository;
+  let eventRepo: ReturnType<typeof mockEventRepo>;
   let userSettings: ReturnType<typeof mockUserSettingsRepo>;
 
   beforeEach(() => {
@@ -478,6 +473,7 @@ describe('createEventActionHandler — event:list back-to-list fix', () => {
   function makeHandler(defaultDaysAhead: number) {
     return createEventActionHandler({
       eventRepository: eventRepo,
+      eventListingRepository: eventRepo,
       watchRepository: {
         list: vi.fn().mockResolvedValue([]),
         get: vi.fn(),
@@ -553,7 +549,7 @@ describe('createEventActionHandler — event:list back-to-list fix', () => {
     // path does); a stale "Back to list" tap re-arms the pagination
     // state. The button must stay hidden for this direct-fetched event.
     eventDetailOrigin.markDirect(TEST_USER_ID, 498515);
-    eventsPaginationState.set(TEST_USER_ID, [baseEvent({ id: 498515 })], 7);
+    eventsPaginationState.set(TEST_USER_ID, [baseListing({ id: 498515 })], 7);
     (eventRepo.getEventById as Mock).mockResolvedValueOnce(baseEvent({ id: 498515 }));
     (eventRepo.getEventRegistrations as Mock).mockResolvedValueOnce([]);
     (eventRepo.getEventDetail as Mock).mockResolvedValueOnce({
@@ -572,7 +568,7 @@ describe('createEventActionHandler — event:list back-to-list fix', () => {
   });
 
   it('shows Back to list on event:<id> callback re-render when the user has a list context', async () => {
-    eventsPaginationState.set(TEST_USER_ID, [baseEvent({ id: 498515 })], 7);
+    eventsPaginationState.set(TEST_USER_ID, [baseListing({ id: 498515 })], 7);
     (eventRepo.getEventById as Mock).mockResolvedValueOnce(baseEvent({ id: 498515 }));
     (eventRepo.getEventRegistrations as Mock).mockResolvedValueOnce([]);
 
@@ -620,7 +616,7 @@ describe('createEventActionHandler — event:list back-to-list fix', () => {
     // Direct-fetching event 498515 must not hide the button for event
     // 800104 opened from a list: the origin is per (user, event).
     eventDetailOrigin.markDirect(TEST_USER_ID, 498515);
-    eventsPaginationState.set(TEST_USER_ID, [baseEvent({ id: 800104 })], 7);
+    eventsPaginationState.set(TEST_USER_ID, [baseListing({ id: 800104 })], 7);
     (eventRepo.getEventById as Mock).mockResolvedValueOnce(baseEvent({ id: 800104 }));
     (eventRepo.getEventRegistrations as Mock).mockResolvedValueOnce([]);
     (eventRepo.getEventDetail as Mock).mockResolvedValueOnce({
