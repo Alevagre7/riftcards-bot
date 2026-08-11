@@ -346,7 +346,7 @@ function mapV2StandingToLeaderboardEntry(
 ): EventStanding {
   return {
     rank: api.rank,
-    name: api.player.best_identifier,
+    name: api.user_event_status.best_identifier,
     roundNumber: api.round_number,
     matchRecord: api.match_record,
     points: api.points,

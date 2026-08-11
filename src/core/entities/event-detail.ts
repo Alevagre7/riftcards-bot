@@ -26,7 +26,7 @@ export interface EventPairing {
 
 export interface EventStanding {
   readonly rank: number;
-  readonly name: string;            // player.best_identifier (== standings[].player.best_identifier)
+  readonly name: string;            // user_event_status.best_identifier (in-game nickname)
   readonly roundNumber: number;
   readonly matchRecord: string;      // "W-L-D"
   readonly points: number;

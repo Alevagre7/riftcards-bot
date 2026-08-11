@@ -401,7 +401,7 @@ describe('RiftboundV2Adapter.getEventDetail', () => {
     expect(standings).toHaveLength(11);
     expect(standings[0]!.rank).toBe(1);
     expect(standings[10]!.rank).toBe(11);
-    expect(standings[10]!.name).toBe('Jake B');
+    expect(standings[10]!.name).toBe('StarEaterShark');
   });
 
   it('uses the 30s cache on the second call', async () => {
@@ -518,7 +518,7 @@ describe('RiftboundV2Adapter.getEventDetail', () => {
 
     const first = detail!.standings[0]!;
     expect(first.rank).toBe(1);
-    expect(first.name).toBe('Connor M');
+    expect(first.name).toBe('conno0622');
     expect(first.roundNumber).toBe(1);
     expect(first.matchRecord).toBe('1-0-0');
     expect(first.points).toBe(3);
