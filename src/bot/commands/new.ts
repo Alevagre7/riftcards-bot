@@ -21,6 +21,7 @@
 import { Context, Markup } from 'telegraf';
 import { ICardRepository } from '../../core/ports/card-repository.js';
 import { Card } from '../../core/entities/card.js';
+import { toTelegramCardImageUrl } from '../utils/telegram-card-image-url.js';
 
 interface NewCommandDeps {
   cardRepository: ICardRepository;
@@ -92,7 +93,7 @@ async function sendAlbum(ctx: Context, cards: Card[]): Promise<void> {
     .filter((c) => c.imageUrl)
     .map((c) => ({
       type: 'photo' as const,
-      media: c.imageUrl as string,
+      media: toTelegramCardImageUrl(c.imageUrl as string),
       caption: c.name,
     }));
   if (media.length === 0) return;
