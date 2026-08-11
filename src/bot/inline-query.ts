@@ -20,6 +20,7 @@ import type { InlineQueryResult } from '@telegraf/types';
 import { ICardRepository } from '../core/ports/card-repository.js';
 import { Card } from '../core/entities/card.js';
 import { formatVersionLabel } from './formatters/card-label.js';
+import { toTelegramCardImageUrl } from './utils/telegram-card-image-url.js';
 import { levenshtein } from '../utils/levenshtein.js';
 
 interface InlineQueryDeps {
@@ -41,13 +42,14 @@ function rankByQuery(cards: Card[], query: string): Card[] {
 function resultForCard(card: Card): InlineQueryResult {
   const label = formatVersionLabel(card);
   if (card.imageUrl) {
+    const imageUrl = toTelegramCardImageUrl(card.imageUrl);
     return {
       type: 'photo',
       id: card.id,
-      photo_url: card.imageUrl,
+      photo_url: imageUrl,
       // thumbnail_url is required by InlineQueryResultPhoto; we
       // reuse photo_url since the image is the only media.
-      thumbnail_url: card.imageUrl,
+      thumbnail_url: imageUrl,
       caption: `<b>${escapeHtml(card.name)}</b> \u00B7 ${escapeHtml(label)}`,
       parse_mode: 'HTML',
     };
