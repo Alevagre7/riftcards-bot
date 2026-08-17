@@ -5,8 +5,8 @@ import {
   renderEventWindowMenu,
 } from './events.js';
 import { setupFlow } from '../state/setup-flow.js';
-import { eventsPaginationState } from '../state/events-pagination-state.js';
-import { eventDetailOrigin } from '../state/event-detail-origin.js';
+import type { IEventNavigationContext } from '../state/event-navigation-context.js';
+import { createEventNavigationContext } from '../state/event-navigation-context.js';
 import { IUserSettingsRepository } from '../../core/ports/user-settings-repository.js';
 import { IEventRepository, EventLocation } from '../../core/ports/event-repository.js';
 import { Event } from '../../core/entities/event.js';
@@ -14,6 +14,11 @@ import { EventListing } from '../../core/entities/event-listing.js';
 import { createEventActionHandler } from '../actions/event-callback.js';
 
 const TEST_USER_ID = 123;
+let navigationContext: IEventNavigationContext;
+
+beforeEach(() => {
+  navigationContext = createEventNavigationContext();
+});
 
 function makeCtx(text?: string): Context {
   // Test mock: the only fields the command under test reads are `from`,
@@ -95,6 +100,7 @@ describe('createEventsCommand — /events set inline coords', () => {
       eventRepository: eventRepo,
       eventListingRepository: eventRepo,
       userSettingsRepository: userSettings,
+      eventNavigationContext: navigationContext,
       defaultLocation: { latitude: 0, longitude: 0, numMiles: 50 },
       defaultRadiusKm: 80,
       daysAhead: 7,
@@ -208,6 +214,7 @@ describe('createEventsCommand — /events <id> and <url> debug path', () => {
       eventRepository: eventRepo,
       eventListingRepository: eventRepo,
       userSettingsRepository: userSettings,
+      eventNavigationContext: navigationContext,
       defaultLocation: { latitude: 0, longitude: 0, numMiles: 50 },
       defaultRadiusKm: 80,
       daysAhead: 7,
@@ -215,6 +222,8 @@ describe('createEventsCommand — /events <id> and <url> debug path', () => {
   }
 
   it('/events <id> (>= 1000) renders detail for that event id', async () => {
+    navigationContext.rememberEventList(TEST_USER_ID, [baseListing({ id: 498515 })], 7);
+
     (eventRepo.getEventById as Mock).mockResolvedValueOnce(baseEvent({ id: 498515 }));
     (eventRepo.getEventRegistrations as Mock).mockResolvedValueOnce([]);
     (eventRepo.getEventDetail as Mock).mockResolvedValueOnce(null);
@@ -227,10 +236,16 @@ describe('createEventsCommand — /events <id> and <url> debug path', () => {
     // command path is not a callback query.
     const replyCall = (ctx.reply as Mock).mock.calls.find((c) => typeof c[0] === 'string');
     expect(replyCall).toBeDefined();
-    expect(String(replyCall![0])).toContain('<b>Test Event</b>');
+    expect(replyCall?.[0]).toContain('<b>Test Event</b>');
+    expect(navigationContext.getEventList(TEST_USER_ID)).toBeNull();
+
+    const texts = (getReplyKeyboard(ctx)?.inline_keyboard ?? []).flat().map((button) => button.text);
+    expect(texts).not.toContain('\u2190 Back to list');
   });
 
   it('/events <locator-url> extracts the id and renders detail', async () => {
+    navigationContext.rememberEventList(TEST_USER_ID, [baseListing({ id: 498515 })], 7);
+
     (eventRepo.getEventById as Mock).mockResolvedValueOnce(baseEvent({ id: 498515 }));
     (eventRepo.getEventRegistrations as Mock).mockResolvedValueOnce([]);
     (eventRepo.getEventDetail as Mock).mockResolvedValueOnce(null);
@@ -239,6 +254,13 @@ describe('createEventsCommand — /events <id> and <url> debug path', () => {
     await makeCmd()(ctx);
 
     expect(eventRepo.getEventById).toHaveBeenCalledWith(498515, expect.anything());
+    const replyCall = (ctx.reply as Mock).mock.calls.find((c) => typeof c[0] === 'string');
+    expect(replyCall).toBeDefined();
+    expect(replyCall?.[0]).toContain('<b>Test Event</b>');
+    expect(navigationContext.getEventList(TEST_USER_ID)).toBeNull();
+
+    const texts = (getReplyKeyboard(ctx)?.inline_keyboard ?? []).flat().map((button) => button.text);
+    expect(texts).not.toContain('\u2190 Back to list');
   });
 
   it('/events <small number> still means days (no event lookup)', async () => {
@@ -309,6 +331,18 @@ function baseListing(over: Partial<EventListing> = {}): EventListing {
     ...over,
   };
 }
+function multiEventListings(): EventListing[] {
+  return Array.from({ length: 9 }, (_, index) => {
+    const start = new Date(Date.UTC(2999, 0, index + 1, 12));
+    return baseListing({
+      id: 100 + index,
+      name: `Event ${index + 1}`,
+      startDatetime: start.toISOString(),
+      endDatetime: new Date(start.getTime() + 4 * 60 * 60 * 1000).toISOString(),
+    });
+  });
+}
+
 // ---------------------------------------------------------------------------
 // /events window menu + in-progress
 
@@ -319,7 +353,6 @@ describe('createEventsCommand — /events window menu', () => {
   beforeEach(() => {
     userSettings = mockUserSettingsRepo();
     eventRepo = mockEventRepo();
-    eventsPaginationState.clear(TEST_USER_ID);
   });
 
   function makeCmd(over: Partial<{ now: () => Date }> = {}) {
@@ -327,6 +360,7 @@ describe('createEventsCommand — /events window menu', () => {
       eventRepository: eventRepo,
       eventListingRepository: eventRepo,
       userSettingsRepository: userSettings,
+      eventNavigationContext: navigationContext,
       defaultLocation: { latitude: 0, longitude: 0, numMiles: 50 },
       defaultRadiusKm: 80,
       daysAhead: 7,
@@ -445,18 +479,20 @@ describe('renderEventWindowMenu', () => {
 // ---------------------------------------------------------------------------
 // event:list back-to-list fix — uses the last-picked daysAhead
 // ---------------------------------------------------------------------------
-function makeCallbackCtx(data: string): Context {
+function makeCallbackCtx(data: string, telegramUserId = TEST_USER_ID): Context {
   const ctx: {
     from: { id: number; is_bot: boolean; first_name: string };
     reply: ReturnType<typeof vi.fn>;
     answerCbQuery: ReturnType<typeof vi.fn>;
     sendChatAction: ReturnType<typeof vi.fn>;
+    editMessageText: Mock;
     callbackQuery: { data: string; message: unknown };
   } = {
-    from: { id: TEST_USER_ID, is_bot: false, first_name: 'Test' },
+    from: { id: telegramUserId, is_bot: false, first_name: 'Test' },
     reply: vi.fn(),
     answerCbQuery: vi.fn().mockResolvedValue(undefined),
     sendChatAction: vi.fn().mockResolvedValue(undefined),
+    editMessageText: vi.fn().mockResolvedValue(undefined),
     callbackQuery: { data, message: { message_id: 1, chat: { id: 1, type: 'private' } } },
   };
   return ctx as unknown as Context;
@@ -469,8 +505,6 @@ describe('createEventActionHandler — event:list back-to-list fix', () => {
   beforeEach(() => {
     eventRepo = mockEventRepo();
     userSettings = mockUserSettingsRepo();
-    eventsPaginationState.clear(TEST_USER_ID);
-    eventDetailOrigin.clearUser(TEST_USER_ID);
   });
 
   function makeHandler(defaultDaysAhead: number) {
@@ -487,16 +521,17 @@ describe('createEventActionHandler — event:list back-to-list fix', () => {
         stop: vi.fn(),
       } as never,
       userSettingsRepository: userSettings,
+      eventNavigationContext: navigationContext,
       defaultLocation: { latitude: 0, longitude: 0, numMiles: 50 },
       daysAhead: defaultDaysAhead,
       adminTelegramIds: [],
     });
   }
 
-  it('event:list uses the user\'s last-picked daysAhead from pagination state', async () => {
+  it('event:list uses the user\'s last-picked daysAhead from navigation context', async () => {
     const fixedNow = new Date('2026-08-01T00:00:00Z');
     // Pre-populate: user picked 14 days earlier.
-    eventsPaginationState.set(TEST_USER_ID, [], 14);
+    navigationContext.rememberEventList(TEST_USER_ID, [], 14);
     (eventRepo.getEvents as Mock).mockResolvedValueOnce([]);
 
     const ctx = makeCallbackCtx('event:list');
@@ -511,7 +546,7 @@ describe('createEventActionHandler — event:list back-to-list fix', () => {
     expect(delta).toBe(14 * 24 * 60 * 60 * 1000 + 12 * 60 * 60 * 1000);
   });
 
-  it('event:list falls back to deps.daysAhead when no pagination state is set', async () => {
+  it('event:list falls back to deps.daysAhead when no navigation context is set', async () => {
     const fixedNow = new Date('2026-08-01T00:00:00Z');
     (eventRepo.getEvents as Mock).mockResolvedValueOnce([]);
 
@@ -525,9 +560,93 @@ describe('createEventActionHandler — event:list back-to-list fix', () => {
     expect(delta).toBe(7 * 24 * 60 * 60 * 1000 + 12 * 60 * 60 * 1000);
   });
 
-  it('hides Back to list on event:<id> callback re-render when the user fetched by id/URL (no list state)', async () => {
-    // Pre-condition: the /events <id> path cleared the list state.
-    eventsPaginationState.clear(TEST_USER_ID);
+  it('renders an active Event list page without refetching listings', async () => {
+    const listings = multiEventListings();
+    navigationContext.rememberEventList(TEST_USER_ID, listings, 14);
+
+    const ctx = makeCallbackCtx('event:page:1');
+    await makeHandler(7)(ctx);
+
+    expect(eventRepo.getEvents).not.toHaveBeenCalled();
+    const editMessageText = (ctx as unknown as { editMessageText: Mock }).editMessageText;
+    expect(editMessageText).toHaveBeenCalledTimes(1);
+    const [body, options] = editMessageText.mock.calls[0] as [
+      string,
+      { reply_markup?: { inline_keyboard: { callback_data?: string }[][] } },
+    ];
+    expect(body).toContain('<b>9</b> events in the next 14 days');
+    const callbackData = (options.reply_markup?.inline_keyboard ?? [])
+      .flat()
+      .map((button) => button.callback_data);
+    expect(callbackData).toContain('event:list:108');
+    expect(callbackData).toContain('event:page:0');
+  });
+
+  it('refetches expired Event list pagination with the configured default window', async () => {
+    let now = 1_000_000;
+    navigationContext = createEventNavigationContext(() => now);
+    navigationContext.rememberEventList(TEST_USER_ID, multiEventListings(), 14);
+    now += 5 * 60 * 1000 + 1;
+
+    const recovered = baseListing({
+      id: 999,
+      name: 'Recovered Event',
+      startDatetime: '2999-01-01T12:00:00Z',
+      endDatetime: '2999-01-01T16:00:00Z',
+    });
+    eventRepo.getEvents.mockResolvedValueOnce([recovered]);
+
+    const ctx = makeCallbackCtx('event:page:0');
+    await makeHandler(7)(ctx);
+
+    expect(eventRepo.getEvents).toHaveBeenCalledTimes(1);
+    const [startAfter, startBefore] = (eventRepo.getEvents as Mock).mock.calls[0] as [Date, Date];
+    expect(startBefore.getTime() - startAfter.getTime()).toBe(
+      7 * 24 * 60 * 60 * 1000 + 12 * 60 * 60 * 1000,
+    );
+
+    const editMessageText = (ctx as unknown as { editMessageText: Mock }).editMessageText;
+    expect(editMessageText).toHaveBeenCalledTimes(1);
+    const [body, options] = editMessageText.mock.calls[0] as [
+      string,
+      { reply_markup?: { inline_keyboard: { callback_data?: string }[][] } },
+    ];
+    expect(body).toContain('<b>1</b> event in the next 7 days');
+    const callbackData = (options.reply_markup?.inline_keyboard ?? [])
+      .flat()
+      .map((button) => button.callback_data);
+    expect(callbackData).toContain('event:list:999');
+  });
+
+  it('does not reuse an Event list context across TelegramUsers', async () => {
+    const listings = multiEventListings();
+    navigationContext.rememberEventList(TEST_USER_ID, listings, 14);
+
+    const recovered = baseListing({
+      id: 999,
+      name: 'Recovered Event',
+      startDatetime: '2999-01-01T12:00:00Z',
+      endDatetime: '2999-01-01T16:00:00Z',
+    });
+    eventRepo.getEvents.mockResolvedValueOnce([recovered]);
+
+    const ctx = makeCallbackCtx('event:page:1', 456);
+    await makeHandler(7)(ctx);
+
+    expect(eventRepo.getEvents).toHaveBeenCalledTimes(1);
+    const editMessageText = (ctx as unknown as { editMessageText: Mock }).editMessageText;
+    expect(editMessageText).toHaveBeenCalledTimes(1);
+    const body = editMessageText.mock.calls[0]?.[0] as string;
+    expect(body).toContain('<b>1</b> event in the next 7 days');
+    expect(body).not.toContain('<b>9</b> events in the next 14 days');
+    expect(navigationContext.getEventList(TEST_USER_ID)).toEqual({
+      events: listings,
+      daysAhead: 14,
+    });
+  });
+
+  it('hides Back to list on event:<id> callback re-render when the user fetched by id/URL (no list context)', async () => {
+    // A fresh context represents the direct /events <id> path with no list.
     (eventRepo.getEventById as Mock).mockResolvedValueOnce(baseEvent({ id: 498515 }));
     (eventRepo.getEventRegistrations as Mock).mockResolvedValueOnce([]);
     // A started event: isStarted true → Leaderboard/All tables shown.
@@ -549,12 +668,74 @@ describe('createEventActionHandler — event:list back-to-list fix', () => {
     expect(texts).toContain('\uD83C\uDFC6 Leaderboard');
   });
 
-  it('keeps Back to list hidden on direct-fetched events even after a stale list-state re-arm', async () => {
+  it('keeps direct-origin suppression through leaderboard, rounds, and back-to-event', async () => {
+    navigationContext.openEventDirectly(TEST_USER_ID, 498515);
+    navigationContext.rememberEventList(TEST_USER_ID, [baseListing({ id: 498515 })], 7);
+
+    const currentRound = {
+      id: 9,
+      roundNumber: 1,
+      status: 'IN_PROGRESS' as const,
+      pairingsStatus: 'GENERATED',
+      standingsStatus: 'GENERATED',
+    };
+    const detail = {
+      event: {
+        ...baseEvent({ id: 498515 }),
+        tournamentPhases: [{
+          id: 1,
+          status: 'IN_PROGRESS' as const,
+          orderInPhases: 1,
+          phaseName: 'Swiss',
+          rounds: [currentRound],
+        }],
+      },
+      currentRound,
+      registrations: [],
+      pairings: [],
+      standings: [{
+        rank: 1,
+        name: 'Alice',
+        roundNumber: 1,
+        matchRecord: '1-0-0',
+        points: 3,
+        opponentMatchWinPercentage: 0.5,
+        gameWinPercentage: 0.5,
+        opponentGameWinPercentage: 0.5,
+      }],
+      fetchedAt: '2026-08-01T00:00:00Z',
+    };
+    (eventRepo.getEventById as Mock).mockResolvedValue(baseEvent({ id: 498515 }));
+    (eventRepo.getEventRegistrations as Mock).mockResolvedValue([]);
+    (eventRepo.getEventDetail as Mock).mockResolvedValue(detail);
+
+    const handler = makeHandler(7);
+    async function renderCallback(data: string): Promise<string[]> {
+      const editMessageText = vi.fn().mockResolvedValue(undefined);
+      const ctx = makeCallbackCtx(data);
+      const callbackContext = ctx as unknown as { editMessageText: Mock };
+      callbackContext.editMessageText = editMessageText;
+      await handler(ctx);
+      const call = editMessageText.mock.calls[0] as [
+        string,
+        { reply_markup?: { inline_keyboard: { text: string }[][] } },
+      ];
+      return (call[1]?.reply_markup?.inline_keyboard ?? []).flat().map((button) => button.text);
+    }
+
+    await renderCallback('event:498515:leaderboard');
+    await renderCallback('event:498515:rounds');
+    const texts = await renderCallback('event:498515');
+
+    expect(texts).not.toContain('\u2190 Back to list');
+  });
+
+  it('keeps Back to list hidden on direct-fetched events even after a stale list-context re-arm', async () => {
     // Direct fetch marks the (user, event) origin (as the /events <id>
-    // path does); a stale "Back to list" tap re-arms the pagination
-    // state. The button must stay hidden for this direct-fetched event.
-    eventDetailOrigin.markDirect(TEST_USER_ID, 498515);
-    eventsPaginationState.set(TEST_USER_ID, [baseListing({ id: 498515 })], 7);
+    // path does); a stale "Back to list" tap re-arms the list context.
+    // The button must stay hidden for this direct-fetched event.
+    navigationContext.openEventDirectly(TEST_USER_ID, 498515);
+    navigationContext.rememberEventList(TEST_USER_ID, [baseListing({ id: 498515 })], 7);
     (eventRepo.getEventById as Mock).mockResolvedValueOnce(baseEvent({ id: 498515 }));
     (eventRepo.getEventRegistrations as Mock).mockResolvedValueOnce([]);
     (eventRepo.getEventDetail as Mock).mockResolvedValueOnce({
@@ -573,7 +754,7 @@ describe('createEventActionHandler — event:list back-to-list fix', () => {
   });
 
   it('shows Back to list on event:<id> callback re-render when the user has a list context', async () => {
-    eventsPaginationState.set(TEST_USER_ID, [baseListing({ id: 498515 })], 7);
+    navigationContext.rememberEventList(TEST_USER_ID, [baseListing({ id: 498515 })], 7);
     (eventRepo.getEventById as Mock).mockResolvedValueOnce(baseEvent({ id: 498515 }));
     (eventRepo.getEventRegistrations as Mock).mockResolvedValueOnce([]);
 
@@ -587,9 +768,9 @@ describe('createEventActionHandler — event:list back-to-list fix', () => {
     expect(texts).toContain('\u2190 Back to list');
   });
 
-  it('clears a direct-origin marker when an event is opened from a list row', async () => {
-    eventDetailOrigin.markDirect(TEST_USER_ID, 498515);
-    eventsPaginationState.set(TEST_USER_ID, [baseListing({ id: 498515 })], 7);
+  it('restores Back to list after opening an event from a list row', async () => {
+    navigationContext.openEventDirectly(TEST_USER_ID, 498515);
+    navigationContext.rememberEventList(TEST_USER_ID, [baseListing({ id: 498515 })], 7);
     (eventRepo.getEventById as Mock).mockResolvedValueOnce(baseEvent({ id: 498515 }));
     (eventRepo.getEventRegistrations as Mock).mockResolvedValueOnce([]);
 
@@ -677,8 +858,8 @@ describe('createEventActionHandler — event:list back-to-list fix', () => {
   it('shows Back to list for a different event opened from a list after a direct fetch', async () => {
     // Direct-fetching event 498515 must not hide the button for event
     // 800104 opened from a list: the origin is per (user, event).
-    eventDetailOrigin.markDirect(TEST_USER_ID, 498515);
-    eventsPaginationState.set(TEST_USER_ID, [baseListing({ id: 800104 })], 7);
+    navigationContext.openEventDirectly(TEST_USER_ID, 498515);
+    navigationContext.rememberEventList(TEST_USER_ID, [baseListing({ id: 800104 })], 7);
     (eventRepo.getEventById as Mock).mockResolvedValueOnce(baseEvent({ id: 800104 }));
     (eventRepo.getEventRegistrations as Mock).mockResolvedValueOnce([]);
     (eventRepo.getEventDetail as Mock).mockResolvedValueOnce({
