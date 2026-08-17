@@ -254,7 +254,7 @@ describe('formatEventDetail', () => {
     expect(button && 'callback_data' in button ? button.callback_data : undefined).toBe('event:42:watch:start');
   });
 
-  it('omits "Back to list" when showBackToList is false (event-id path)', () => {
+  it('omits Back to list when the caller supplies false', () => {
     const result = formatEventDetail(baseEvent, [], { showBackToList: false });
     const texts = result.buttons.flat().map((b) => b.text);
     expect(texts).not.toContain('\u2190 Back to list');

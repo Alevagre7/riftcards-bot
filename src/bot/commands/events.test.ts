@@ -7,7 +7,6 @@ import {
 import { setupFlow } from '../state/setup-flow.js';
 import type { IEventNavigationContext } from '../state/event-navigation-context.js';
 import { createEventNavigationContext } from '../state/event-navigation-context.js';
-import { eventDetailOrigin } from '../state/event-detail-origin.js';
 import { IUserSettingsRepository } from '../../core/ports/user-settings-repository.js';
 import { IEventRepository, EventLocation } from '../../core/ports/event-repository.js';
 import { Event } from '../../core/entities/event.js';
@@ -235,7 +234,8 @@ describe('createEventsCommand — /events <id> and <url> debug path', () => {
     // command path is not a callback query.
     const replyCall = (ctx.reply as Mock).mock.calls.find((c) => typeof c[0] === 'string');
     expect(replyCall).toBeDefined();
-    expect(String(replyCall![0])).toContain('<b>Test Event</b>');
+    const texts = (getReplyKeyboard(ctx)?.inline_keyboard ?? []).flat().map((button) => button.text);
+    expect(texts).not.toContain('\u2190 Back to list');
   });
 
   it('/events <locator-url> extracts the id and renders detail', async () => {
@@ -247,6 +247,8 @@ describe('createEventsCommand — /events <id> and <url> debug path', () => {
     await makeCmd()(ctx);
 
     expect(eventRepo.getEventById).toHaveBeenCalledWith(498515, expect.anything());
+    const texts = (getReplyKeyboard(ctx)?.inline_keyboard ?? []).flat().map((button) => button.text);
+    expect(texts).not.toContain('\u2190 Back to list');
   });
 
   it('/events <small number> still means days (no event lookup)', async () => {
@@ -477,7 +479,6 @@ describe('createEventActionHandler — event:list back-to-list fix', () => {
   beforeEach(() => {
     eventRepo = mockEventRepo();
     userSettings = mockUserSettingsRepo();
-    eventDetailOrigin.clearUser(TEST_USER_ID);
   });
 
   function makeHandler(defaultDaysAhead: number) {
@@ -556,11 +557,73 @@ describe('createEventActionHandler — event:list back-to-list fix', () => {
     expect(texts).toContain('\uD83C\uDFC6 Leaderboard');
   });
 
+  it('keeps direct-origin suppression through leaderboard, rounds, and back-to-event', async () => {
+    navigationContext.openEventDirectly(TEST_USER_ID, 498515);
+    navigationContext.rememberEventList(TEST_USER_ID, [baseListing({ id: 498515 })], 7);
+
+    const currentRound = {
+      id: 9,
+      roundNumber: 1,
+      status: 'IN_PROGRESS' as const,
+      pairingsStatus: 'GENERATED',
+      standingsStatus: 'GENERATED',
+    };
+    const detail = {
+      event: {
+        ...baseEvent({ id: 498515 }),
+        tournamentPhases: [{
+          id: 1,
+          status: 'IN_PROGRESS' as const,
+          orderInPhases: 1,
+          phaseName: 'Swiss',
+          rounds: [currentRound],
+        }],
+      },
+      currentRound,
+      registrations: [],
+      pairings: [],
+      standings: [{
+        rank: 1,
+        name: 'Alice',
+        roundNumber: 1,
+        matchRecord: '1-0-0',
+        points: 3,
+        opponentMatchWinPercentage: 0.5,
+        gameWinPercentage: 0.5,
+        opponentGameWinPercentage: 0.5,
+      }],
+      fetchedAt: '2026-08-01T00:00:00Z',
+    };
+    (eventRepo.getEventById as Mock).mockResolvedValue(baseEvent({ id: 498515 }));
+    (eventRepo.getEventRegistrations as Mock).mockResolvedValue([]);
+    (eventRepo.getEventDetail as Mock).mockResolvedValue(detail);
+
+    const handler = makeHandler(7);
+    async function renderCallback(data: string): Promise<string[]> {
+      const editMessageText = vi.fn().mockResolvedValue(undefined);
+      const ctx = makeCallbackCtx(data);
+      const callbackContext = ctx as unknown as { editMessageText: Mock };
+      callbackContext.editMessageText = editMessageText;
+      await handler(ctx);
+      const call = editMessageText.mock.calls[0] as [
+        string,
+        { reply_markup?: { inline_keyboard: { text: string }[][] } },
+      ];
+      return (call[1]?.reply_markup?.inline_keyboard ?? []).flat().map((button) => button.text);
+    }
+
+    await renderCallback('event:498515:leaderboard');
+    await renderCallback('event:498515:rounds');
+    const texts = await renderCallback('event:498515');
+
+    expect(texts).not.toContain('\u2190 Back to list');
+  });
+
   it('keeps Back to list hidden on direct-fetched events even after a stale list-context re-arm', async () => {
     // Direct fetch marks the (user, event) origin (as the /events <id>
     // path does); a stale "Back to list" tap re-arms the list context.
     // The button must stay hidden for this direct-fetched event.
-    eventDetailOrigin.markDirect(TEST_USER_ID, 498515);
+    navigationContext.openEventDirectly(TEST_USER_ID, 498515);
     navigationContext.rememberEventList(TEST_USER_ID, [baseListing({ id: 498515 })], 7);
     (eventRepo.getEventById as Mock).mockResolvedValueOnce(baseEvent({ id: 498515 }));
     (eventRepo.getEventRegistrations as Mock).mockResolvedValueOnce([]);
@@ -594,8 +657,8 @@ describe('createEventActionHandler — event:list back-to-list fix', () => {
     expect(texts).toContain('\u2190 Back to list');
   });
 
-  it('clears a direct-origin marker when an event is opened from a list row', async () => {
-    eventDetailOrigin.markDirect(TEST_USER_ID, 498515);
+  it('restores Back to list after opening an event from a list row', async () => {
+    navigationContext.openEventDirectly(TEST_USER_ID, 498515);
     navigationContext.rememberEventList(TEST_USER_ID, [baseListing({ id: 498515 })], 7);
     (eventRepo.getEventById as Mock).mockResolvedValueOnce(baseEvent({ id: 498515 }));
     (eventRepo.getEventRegistrations as Mock).mockResolvedValueOnce([]);
@@ -684,7 +747,7 @@ describe('createEventActionHandler — event:list back-to-list fix', () => {
   it('shows Back to list for a different event opened from a list after a direct fetch', async () => {
     // Direct-fetching event 498515 must not hide the button for event
     // 800104 opened from a list: the origin is per (user, event).
-    eventDetailOrigin.markDirect(TEST_USER_ID, 498515);
+    navigationContext.openEventDirectly(TEST_USER_ID, 498515);
     navigationContext.rememberEventList(TEST_USER_ID, [baseListing({ id: 800104 })], 7);
     (eventRepo.getEventById as Mock).mockResolvedValueOnce(baseEvent({ id: 800104 }));
     (eventRepo.getEventRegistrations as Mock).mockResolvedValueOnce([]);

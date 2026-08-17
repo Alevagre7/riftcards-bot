@@ -191,9 +191,7 @@ export function formatEventDetail(
     }
   }
 
-  // "Back to list" makes no sense when the user opened the detail
-  // from /events <id> or a locator URL — there is no list to go back
-  // to. The event-id command path passes showBackToList: false.
+  // Back-to-list visibility follows the caller's navigation decision.
   if (options?.showBackToList !== false) {
     buttons.push([{ text: '\u2190 Back to list', callback_data: 'event:list' }]);
   }

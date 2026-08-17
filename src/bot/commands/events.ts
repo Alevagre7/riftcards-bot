@@ -8,7 +8,6 @@ import { formatEventList } from '../formatters/event-list-formatter.js';
 import { formatEventDetail, EventWatchDetailState } from '../formatters/event-detail-formatter.js';
 import { setupFlow } from '../state/setup-flow.js';
 import type { IEventNavigationContext } from '../state/event-navigation-context.js';
-import { eventDetailOrigin } from '../state/event-detail-origin.js';
 import { stripCommand } from '../utils/strip-command.js';
 import { kmToMiles, milesToKm } from '../../utils/units.js';
 
@@ -148,7 +147,6 @@ export async function renderEventDetail(
   ctx: Context,
   deps: EventsCommandDeps,
   id: number,
-  options?: { showBackToList?: boolean },
 ): Promise<void> {
   await ctx.sendChatAction('typing');
 
@@ -190,17 +188,11 @@ export async function renderEventDetail(
     }
   }
 
-  // Default: show "Back to list" only when the user has a live list
-  // context and this event was not opened directly. Direct-origin
-  // suppression remains on the legacy marker until its later migration.
-  const showBackToList = options?.showBackToList
-    ?? (userId != null
-      && deps.eventNavigationContext.getEventList(userId) != null
-      && !eventDetailOrigin.isDirect(userId, id));
+  const showBackToList = deps.eventNavigationContext.shouldShowBackToList(userId, id);
   const result = formatEventDetail(event, registrations, {
     privateChat: ctx.chat?.type === 'private',
     ...(isStarted !== undefined ? { isStarted } : {}),
-    ...(showBackToList === false ? { showBackToList: false } : {}),
+    showBackToList,
     ...(watchState ? { watchState } : {}),
   });
 
@@ -346,14 +338,9 @@ export function createEventsCommand(deps: EventsCommandDeps) {
         await ctx.reply('Could not read the event id. Use a bare number or a locator URL.');
         return;
       }
-      // Clear the shared list context while retaining the legacy direct-origin
-      // marker and explicit detail override until the direct-origin migration.
       const userId = ctx.from?.id;
-      if (userId != null) {
-        deps.eventNavigationContext.openEventDirectly(userId, id);
-        eventDetailOrigin.markDirect(userId, id);
-      }
-      await renderEventDetail(ctx, deps, id, { showBackToList: false });
+      deps.eventNavigationContext.openEventDirectly(userId, id);
+      await renderEventDetail(ctx, deps, id);
       return;
     }
 

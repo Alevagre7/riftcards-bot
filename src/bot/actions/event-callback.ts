@@ -18,7 +18,6 @@ import {
 import { formatEventLeaderboard } from '../formatters/event-leaderboard-formatter.js';
 import { formatEventRounds } from '../formatters/event-rounds-formatter.js';
 import type { IEventNavigationContext } from '../state/event-navigation-context.js';
-import { eventDetailOrigin } from '../state/event-detail-origin.js';
 import { escapeHtml } from '../formatters/card-formatter.js';
 import { formatEventWatchStatus, formatNoEventWatch } from '../formatters/event-watch-formatter.js';
 
@@ -103,14 +102,13 @@ export function createEventActionHandler(deps: EventActionDeps) {
       return;
     }
 
-    // Event opened from an actual list row. Clear both the shared context's
-    // marker and the legacy marker until direct-origin migration completes.
+    // Event opened from an actual list row. The navigation context clears
+    // only this Event's direct marker and preserves the list context.
     const listEventMatch = /^event:list:(\d+)$/.exec(data);
     if (listEventMatch) {
       const eventId = parseInt(listEventMatch[1]!, 10);
       const userId = ctx.from?.id;
       deps.eventNavigationContext.openEventFromList(userId, eventId);
-      if (userId != null) eventDetailOrigin.clear(userId, eventId);
       await renderEventDetail(ctx, deps, eventId);
       return;
     }
