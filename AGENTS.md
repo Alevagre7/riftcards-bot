@@ -458,3 +458,17 @@ On user confirmation, the agent closes the loop immediately — do not wait for 
 If the user asks for an iteration on the same plan before merge: edit, commit on the same branch, push, run `scripts/deploy.sh feat/<plan-slug>` again. Repeat until approval.
 
 If `git push` requires interactive auth (no SSH key on this host), the agent surfaces the exact `git push` line for the user to run, then resumes from step 5.
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specs are tracked in this repository's GitHub Issues. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Triage uses the five canonical labels without repository-specific aliases. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Domain documentation uses a single-context layout. See `docs/agents/domain.md`.
