@@ -96,6 +96,16 @@ describe('createEventNavigationContext', () => {
     });
   });
 
+  it('returns null for list context after five minutes plus one millisecond', () => {
+    const { clock, advance } = makeClock();
+    const navigation = createEventNavigationContext(clock);
+
+    navigation.rememberEventList(123, [LISTING_A], 7);
+    advance(LIST_TTL_MS + 1);
+
+    expect(navigation.getEventList(123)).toBeNull();
+  });
+
   it('isolates list contexts by TelegramUser', () => {
     const navigation = createEventNavigationContext(() => 1_000_000);
 
@@ -148,6 +158,17 @@ describe('createEventNavigationContext', () => {
     navigation.openEventDirectly(123, LISTING_A.id);
     navigation.rememberEventList(123, [LISTING_A], 7);
     expect(navigation.shouldShowBackToList(123, LISTING_A.id)).toBe(false);
+  });
+
+  it('shows Back to list after thirty minutes plus one millisecond when list context is live', () => {
+    const { clock, advance } = makeClock();
+    const navigation = createEventNavigationContext(clock);
+
+    navigation.openEventDirectly(123, LISTING_A.id);
+    advance(DIRECT_TTL_MS + 1);
+    navigation.rememberEventList(123, [LISTING_A], 7);
+
+    expect(navigation.shouldShowBackToList(123, LISTING_A.id)).toBe(true);
   });
 
   it('list-open clears only the selected Event direct-origin marker', () => {

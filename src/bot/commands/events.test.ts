@@ -222,6 +222,8 @@ describe('createEventsCommand — /events <id> and <url> debug path', () => {
   }
 
   it('/events <id> (>= 1000) renders detail for that event id', async () => {
+    navigationContext.rememberEventList(TEST_USER_ID, [baseListing({ id: 498515 })], 7);
+
     (eventRepo.getEventById as Mock).mockResolvedValueOnce(baseEvent({ id: 498515 }));
     (eventRepo.getEventRegistrations as Mock).mockResolvedValueOnce([]);
     (eventRepo.getEventDetail as Mock).mockResolvedValueOnce(null);
@@ -234,11 +236,16 @@ describe('createEventsCommand — /events <id> and <url> debug path', () => {
     // command path is not a callback query.
     const replyCall = (ctx.reply as Mock).mock.calls.find((c) => typeof c[0] === 'string');
     expect(replyCall).toBeDefined();
+    expect(replyCall?.[0]).toContain('<b>Test Event</b>');
+    expect(navigationContext.getEventList(TEST_USER_ID)).toBeNull();
+
     const texts = (getReplyKeyboard(ctx)?.inline_keyboard ?? []).flat().map((button) => button.text);
     expect(texts).not.toContain('\u2190 Back to list');
   });
 
   it('/events <locator-url> extracts the id and renders detail', async () => {
+    navigationContext.rememberEventList(TEST_USER_ID, [baseListing({ id: 498515 })], 7);
+
     (eventRepo.getEventById as Mock).mockResolvedValueOnce(baseEvent({ id: 498515 }));
     (eventRepo.getEventRegistrations as Mock).mockResolvedValueOnce([]);
     (eventRepo.getEventDetail as Mock).mockResolvedValueOnce(null);
@@ -247,6 +254,11 @@ describe('createEventsCommand — /events <id> and <url> debug path', () => {
     await makeCmd()(ctx);
 
     expect(eventRepo.getEventById).toHaveBeenCalledWith(498515, expect.anything());
+    const replyCall = (ctx.reply as Mock).mock.calls.find((c) => typeof c[0] === 'string');
+    expect(replyCall).toBeDefined();
+    expect(replyCall?.[0]).toContain('<b>Test Event</b>');
+    expect(navigationContext.getEventList(TEST_USER_ID)).toBeNull();
+
     const texts = (getReplyKeyboard(ctx)?.inline_keyboard ?? []).flat().map((button) => button.text);
     expect(texts).not.toContain('\u2190 Back to list');
   });
@@ -319,6 +331,18 @@ function baseListing(over: Partial<EventListing> = {}): EventListing {
     ...over,
   };
 }
+function multiEventListings(): EventListing[] {
+  return Array.from({ length: 9 }, (_, index) => {
+    const start = new Date(Date.UTC(2999, 0, index + 1, 12));
+    return baseListing({
+      id: 100 + index,
+      name: `Event ${index + 1}`,
+      startDatetime: start.toISOString(),
+      endDatetime: new Date(start.getTime() + 4 * 60 * 60 * 1000).toISOString(),
+    });
+  });
+}
+
 // ---------------------------------------------------------------------------
 // /events window menu + in-progress
 
@@ -455,18 +479,20 @@ describe('renderEventWindowMenu', () => {
 // ---------------------------------------------------------------------------
 // event:list back-to-list fix — uses the last-picked daysAhead
 // ---------------------------------------------------------------------------
-function makeCallbackCtx(data: string): Context {
+function makeCallbackCtx(data: string, telegramUserId = TEST_USER_ID): Context {
   const ctx: {
     from: { id: number; is_bot: boolean; first_name: string };
     reply: ReturnType<typeof vi.fn>;
     answerCbQuery: ReturnType<typeof vi.fn>;
     sendChatAction: ReturnType<typeof vi.fn>;
+    editMessageText: Mock;
     callbackQuery: { data: string; message: unknown };
   } = {
-    from: { id: TEST_USER_ID, is_bot: false, first_name: 'Test' },
+    from: { id: telegramUserId, is_bot: false, first_name: 'Test' },
     reply: vi.fn(),
     answerCbQuery: vi.fn().mockResolvedValue(undefined),
     sendChatAction: vi.fn().mockResolvedValue(undefined),
+    editMessageText: vi.fn().mockResolvedValue(undefined),
     callbackQuery: { data, message: { message_id: 1, chat: { id: 1, type: 'private' } } },
   };
   return ctx as unknown as Context;
@@ -532,6 +558,91 @@ describe('createEventActionHandler — event:list back-to-list fix', () => {
     const [startAfter, startBefore] = (eventRepo.getEvents as Mock).mock.calls[0] as [Date, Date];
     const delta = startBefore.getTime() - startAfter.getTime();
     expect(delta).toBe(7 * 24 * 60 * 60 * 1000 + 12 * 60 * 60 * 1000);
+  });
+
+  it('renders an active Event list page without refetching listings', async () => {
+    const listings = multiEventListings();
+    navigationContext.rememberEventList(TEST_USER_ID, listings, 14);
+
+    const ctx = makeCallbackCtx('event:page:1');
+    await makeHandler(7)(ctx);
+
+    expect(eventRepo.getEvents).not.toHaveBeenCalled();
+    const editMessageText = (ctx as unknown as { editMessageText: Mock }).editMessageText;
+    expect(editMessageText).toHaveBeenCalledTimes(1);
+    const [body, options] = editMessageText.mock.calls[0] as [
+      string,
+      { reply_markup?: { inline_keyboard: { callback_data?: string }[][] } },
+    ];
+    expect(body).toContain('<b>9</b> events in the next 14 days');
+    const callbackData = (options.reply_markup?.inline_keyboard ?? [])
+      .flat()
+      .map((button) => button.callback_data);
+    expect(callbackData).toContain('event:list:108');
+    expect(callbackData).toContain('event:page:0');
+  });
+
+  it('refetches expired Event list pagination with the configured default window', async () => {
+    let now = 1_000_000;
+    navigationContext = createEventNavigationContext(() => now);
+    navigationContext.rememberEventList(TEST_USER_ID, multiEventListings(), 14);
+    now += 5 * 60 * 1000 + 1;
+
+    const recovered = baseListing({
+      id: 999,
+      name: 'Recovered Event',
+      startDatetime: '2999-01-01T12:00:00Z',
+      endDatetime: '2999-01-01T16:00:00Z',
+    });
+    eventRepo.getEvents.mockResolvedValueOnce([recovered]);
+
+    const ctx = makeCallbackCtx('event:page:0');
+    await makeHandler(7)(ctx);
+
+    expect(eventRepo.getEvents).toHaveBeenCalledTimes(1);
+    const [startAfter, startBefore] = (eventRepo.getEvents as Mock).mock.calls[0] as [Date, Date];
+    expect(startBefore.getTime() - startAfter.getTime()).toBe(
+      7 * 24 * 60 * 60 * 1000 + 12 * 60 * 60 * 1000,
+    );
+
+    const editMessageText = (ctx as unknown as { editMessageText: Mock }).editMessageText;
+    expect(editMessageText).toHaveBeenCalledTimes(1);
+    const [body, options] = editMessageText.mock.calls[0] as [
+      string,
+      { reply_markup?: { inline_keyboard: { callback_data?: string }[][] } },
+    ];
+    expect(body).toContain('<b>1</b> event in the next 7 days');
+    const callbackData = (options.reply_markup?.inline_keyboard ?? [])
+      .flat()
+      .map((button) => button.callback_data);
+    expect(callbackData).toContain('event:list:999');
+  });
+
+  it('does not reuse an Event list context across TelegramUsers', async () => {
+    const listings = multiEventListings();
+    navigationContext.rememberEventList(TEST_USER_ID, listings, 14);
+
+    const recovered = baseListing({
+      id: 999,
+      name: 'Recovered Event',
+      startDatetime: '2999-01-01T12:00:00Z',
+      endDatetime: '2999-01-01T16:00:00Z',
+    });
+    eventRepo.getEvents.mockResolvedValueOnce([recovered]);
+
+    const ctx = makeCallbackCtx('event:page:1', 456);
+    await makeHandler(7)(ctx);
+
+    expect(eventRepo.getEvents).toHaveBeenCalledTimes(1);
+    const editMessageText = (ctx as unknown as { editMessageText: Mock }).editMessageText;
+    expect(editMessageText).toHaveBeenCalledTimes(1);
+    const body = editMessageText.mock.calls[0]?.[0] as string;
+    expect(body).toContain('<b>1</b> event in the next 7 days');
+    expect(body).not.toContain('<b>9</b> events in the next 14 days');
+    expect(navigationContext.getEventList(TEST_USER_ID)).toEqual({
+      events: listings,
+      daysAhead: 14,
+    });
   });
 
   it('hides Back to list on event:<id> callback re-render when the user fetched by id/URL (no list context)', async () => {
