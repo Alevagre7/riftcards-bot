@@ -29,6 +29,7 @@ import { createInlineQueryHandler } from './bot/inline-query.js';
 import { createCardActionHandler } from './bot/actions/callbacks.js';
 import { createNewActionHandler } from './bot/actions/new-callback.js';
 import { createEventActionHandler } from './bot/actions/event-callback.js';
+import { createEventNavigationContext } from './bot/state/event-navigation-context.js';
 import {
   createLocationPickupHandler,
   createNexusUsernamePickupHandler,
@@ -79,6 +80,7 @@ async function main() {
     longitude: config.eventsLongitude,
     numMiles: config.eventsRadiusKm * KM_PER_MILE,
   };
+  const eventNavigationContext = createEventNavigationContext();
 
   const bot = new Telegraf(config.telegramBotToken);
 
@@ -174,6 +176,7 @@ async function main() {
   bot.command(
     'events',
     createEventsCommand({
+      eventNavigationContext,
       eventRepository,
       eventListingRepository,
       userSettingsRepository,
@@ -225,6 +228,7 @@ async function main() {
   bot.action(
     /^(event:.+|watch:.+|admin:stop:\d+:.+)$/,
     createEventActionHandler({
+      eventNavigationContext,
       eventRepository,
       watchManager,
       userSettingsRepository,

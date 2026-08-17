@@ -5,7 +5,8 @@ import {
   renderEventWindowMenu,
 } from './events.js';
 import { setupFlow } from '../state/setup-flow.js';
-import { eventsPaginationState } from '../state/events-pagination-state.js';
+import type { IEventNavigationContext } from '../state/event-navigation-context.js';
+import { createEventNavigationContext } from '../state/event-navigation-context.js';
 import { eventDetailOrigin } from '../state/event-detail-origin.js';
 import { IUserSettingsRepository } from '../../core/ports/user-settings-repository.js';
 import { IEventRepository, EventLocation } from '../../core/ports/event-repository.js';
@@ -14,6 +15,11 @@ import { EventListing } from '../../core/entities/event-listing.js';
 import { createEventActionHandler } from '../actions/event-callback.js';
 
 const TEST_USER_ID = 123;
+let navigationContext: IEventNavigationContext;
+
+beforeEach(() => {
+  navigationContext = createEventNavigationContext();
+});
 
 function makeCtx(text?: string): Context {
   // Test mock: the only fields the command under test reads are `from`,
@@ -95,6 +101,7 @@ describe('createEventsCommand — /events set inline coords', () => {
       eventRepository: eventRepo,
       eventListingRepository: eventRepo,
       userSettingsRepository: userSettings,
+      eventNavigationContext: navigationContext,
       defaultLocation: { latitude: 0, longitude: 0, numMiles: 50 },
       defaultRadiusKm: 80,
       daysAhead: 7,
@@ -208,6 +215,7 @@ describe('createEventsCommand — /events <id> and <url> debug path', () => {
       eventRepository: eventRepo,
       eventListingRepository: eventRepo,
       userSettingsRepository: userSettings,
+      eventNavigationContext: navigationContext,
       defaultLocation: { latitude: 0, longitude: 0, numMiles: 50 },
       defaultRadiusKm: 80,
       daysAhead: 7,
@@ -319,7 +327,6 @@ describe('createEventsCommand — /events window menu', () => {
   beforeEach(() => {
     userSettings = mockUserSettingsRepo();
     eventRepo = mockEventRepo();
-    eventsPaginationState.clear(TEST_USER_ID);
   });
 
   function makeCmd(over: Partial<{ now: () => Date }> = {}) {
@@ -327,6 +334,7 @@ describe('createEventsCommand — /events window menu', () => {
       eventRepository: eventRepo,
       eventListingRepository: eventRepo,
       userSettingsRepository: userSettings,
+      eventNavigationContext: navigationContext,
       defaultLocation: { latitude: 0, longitude: 0, numMiles: 50 },
       defaultRadiusKm: 80,
       daysAhead: 7,
@@ -469,7 +477,6 @@ describe('createEventActionHandler — event:list back-to-list fix', () => {
   beforeEach(() => {
     eventRepo = mockEventRepo();
     userSettings = mockUserSettingsRepo();
-    eventsPaginationState.clear(TEST_USER_ID);
     eventDetailOrigin.clearUser(TEST_USER_ID);
   });
 
@@ -487,16 +494,17 @@ describe('createEventActionHandler — event:list back-to-list fix', () => {
         stop: vi.fn(),
       } as never,
       userSettingsRepository: userSettings,
+      eventNavigationContext: navigationContext,
       defaultLocation: { latitude: 0, longitude: 0, numMiles: 50 },
       daysAhead: defaultDaysAhead,
       adminTelegramIds: [],
     });
   }
 
-  it('event:list uses the user\'s last-picked daysAhead from pagination state', async () => {
+  it('event:list uses the user\'s last-picked daysAhead from navigation context', async () => {
     const fixedNow = new Date('2026-08-01T00:00:00Z');
     // Pre-populate: user picked 14 days earlier.
-    eventsPaginationState.set(TEST_USER_ID, [], 14);
+    navigationContext.rememberEventList(TEST_USER_ID, [], 14);
     (eventRepo.getEvents as Mock).mockResolvedValueOnce([]);
 
     const ctx = makeCallbackCtx('event:list');
@@ -511,7 +519,7 @@ describe('createEventActionHandler — event:list back-to-list fix', () => {
     expect(delta).toBe(14 * 24 * 60 * 60 * 1000 + 12 * 60 * 60 * 1000);
   });
 
-  it('event:list falls back to deps.daysAhead when no pagination state is set', async () => {
+  it('event:list falls back to deps.daysAhead when no navigation context is set', async () => {
     const fixedNow = new Date('2026-08-01T00:00:00Z');
     (eventRepo.getEvents as Mock).mockResolvedValueOnce([]);
 
@@ -525,9 +533,8 @@ describe('createEventActionHandler — event:list back-to-list fix', () => {
     expect(delta).toBe(7 * 24 * 60 * 60 * 1000 + 12 * 60 * 60 * 1000);
   });
 
-  it('hides Back to list on event:<id> callback re-render when the user fetched by id/URL (no list state)', async () => {
-    // Pre-condition: the /events <id> path cleared the list state.
-    eventsPaginationState.clear(TEST_USER_ID);
+  it('hides Back to list on event:<id> callback re-render when the user fetched by id/URL (no list context)', async () => {
+    // A fresh context represents the direct /events <id> path with no list.
     (eventRepo.getEventById as Mock).mockResolvedValueOnce(baseEvent({ id: 498515 }));
     (eventRepo.getEventRegistrations as Mock).mockResolvedValueOnce([]);
     // A started event: isStarted true → Leaderboard/All tables shown.
@@ -549,12 +556,12 @@ describe('createEventActionHandler — event:list back-to-list fix', () => {
     expect(texts).toContain('\uD83C\uDFC6 Leaderboard');
   });
 
-  it('keeps Back to list hidden on direct-fetched events even after a stale list-state re-arm', async () => {
+  it('keeps Back to list hidden on direct-fetched events even after a stale list-context re-arm', async () => {
     // Direct fetch marks the (user, event) origin (as the /events <id>
-    // path does); a stale "Back to list" tap re-arms the pagination
-    // state. The button must stay hidden for this direct-fetched event.
+    // path does); a stale "Back to list" tap re-arms the list context.
+    // The button must stay hidden for this direct-fetched event.
     eventDetailOrigin.markDirect(TEST_USER_ID, 498515);
-    eventsPaginationState.set(TEST_USER_ID, [baseListing({ id: 498515 })], 7);
+    navigationContext.rememberEventList(TEST_USER_ID, [baseListing({ id: 498515 })], 7);
     (eventRepo.getEventById as Mock).mockResolvedValueOnce(baseEvent({ id: 498515 }));
     (eventRepo.getEventRegistrations as Mock).mockResolvedValueOnce([]);
     (eventRepo.getEventDetail as Mock).mockResolvedValueOnce({
@@ -573,7 +580,7 @@ describe('createEventActionHandler — event:list back-to-list fix', () => {
   });
 
   it('shows Back to list on event:<id> callback re-render when the user has a list context', async () => {
-    eventsPaginationState.set(TEST_USER_ID, [baseListing({ id: 498515 })], 7);
+    navigationContext.rememberEventList(TEST_USER_ID, [baseListing({ id: 498515 })], 7);
     (eventRepo.getEventById as Mock).mockResolvedValueOnce(baseEvent({ id: 498515 }));
     (eventRepo.getEventRegistrations as Mock).mockResolvedValueOnce([]);
 
@@ -589,7 +596,7 @@ describe('createEventActionHandler — event:list back-to-list fix', () => {
 
   it('clears a direct-origin marker when an event is opened from a list row', async () => {
     eventDetailOrigin.markDirect(TEST_USER_ID, 498515);
-    eventsPaginationState.set(TEST_USER_ID, [baseListing({ id: 498515 })], 7);
+    navigationContext.rememberEventList(TEST_USER_ID, [baseListing({ id: 498515 })], 7);
     (eventRepo.getEventById as Mock).mockResolvedValueOnce(baseEvent({ id: 498515 }));
     (eventRepo.getEventRegistrations as Mock).mockResolvedValueOnce([]);
 
@@ -678,7 +685,7 @@ describe('createEventActionHandler — event:list back-to-list fix', () => {
     // Direct-fetching event 498515 must not hide the button for event
     // 800104 opened from a list: the origin is per (user, event).
     eventDetailOrigin.markDirect(TEST_USER_ID, 498515);
-    eventsPaginationState.set(TEST_USER_ID, [baseListing({ id: 800104 })], 7);
+    navigationContext.rememberEventList(TEST_USER_ID, [baseListing({ id: 800104 })], 7);
     (eventRepo.getEventById as Mock).mockResolvedValueOnce(baseEvent({ id: 800104 }));
     (eventRepo.getEventRegistrations as Mock).mockResolvedValueOnce([]);
     (eventRepo.getEventDetail as Mock).mockResolvedValueOnce({

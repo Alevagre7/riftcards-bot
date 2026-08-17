@@ -2,17 +2,15 @@
 // opened directly via /events <id> or a locator URL, keyed by
 // (telegramId, eventId).
 //
-// The detail page's "Back to list" button is driven by this flag in
-// combination with eventsPaginationState: the button shows only when
-// the user has a live list context AND the event was not opened
-// directly. Because the flag is per-event, a direct-fetched event
-// keeps hiding the button across leaderboard/rounds → back-to-event
-// round trips even if a stale "Back to list" tap re-arms the
-// pagination state, while any OTHER event opened from a list still
-// shows it. The mark expires after TTL_MS.
+// The detail page's "Back to list" button combines this legacy marker with
+// the shared Event navigation context: the button shows only when the user
+// has a live list context AND the event was not opened directly. Because the
+// marker is per-event, a direct-fetched event keeps hiding the button across
+// leaderboard/rounds → back-to-event round trips even if a stale "Back to
+// list" tap re-arms the navigation context, while any OTHER event opened
+// from a list still shows it. The mark expires after TTL_MS.
 //
-// In-memory, TTL-based, non-persistent — same shape as
-// events-pagination-state.ts.
+// In-memory, TTL-based, non-persistent direct-origin state.
 
 const TTL_MS = 30 * 60 * 1000;
 

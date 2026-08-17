@@ -7,6 +7,7 @@ import type { EventWatch } from '../../core/entities/event-watch.js';
 import { IEventWatchManager } from '../services/event-watch-manager.js';
 import { IEventListingRepository } from '../../core/ports/event-listing-repository.js';
 import { IUserSettingsRepository } from '../../core/ports/user-settings-repository.js';
+import { createEventNavigationContext } from '../state/event-navigation-context.js';
 
 const event = {
   id: 42,
@@ -67,7 +68,11 @@ function makeContext(data: string): Context {
   } as unknown as Context;
 }
 
-function makeHandler(detailValue: EventDetail, watchManager: IEventWatchManager) {
+function makeHandler(
+  detailValue: EventDetail,
+  watchManager: IEventWatchManager,
+  eventNavigationContext = createEventNavigationContext(),
+) {
   const eventRepository: IEventRepository = {
     getEventById: vi.fn(),
     getEventRegistrations: vi.fn(),
@@ -89,6 +94,7 @@ function makeHandler(detailValue: EventDetail, watchManager: IEventWatchManager)
     eventListingRepository,
     watchManager,
     userSettingsRepository,
+    eventNavigationContext,
     defaultLocation: { latitude: 0, longitude: 0, numMiles: 25 },
     daysAhead: 7,
     adminTelegramIds: [],

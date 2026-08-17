@@ -7,7 +7,7 @@ import { IEventWatchManager } from '../services/event-watch-manager.js';
 import { formatEventList } from '../formatters/event-list-formatter.js';
 import { formatEventDetail, EventWatchDetailState } from '../formatters/event-detail-formatter.js';
 import { setupFlow } from '../state/setup-flow.js';
-import { eventsPaginationState } from '../state/events-pagination-state.js';
+import type { IEventNavigationContext } from '../state/event-navigation-context.js';
 import { eventDetailOrigin } from '../state/event-detail-origin.js';
 import { stripCommand } from '../utils/strip-command.js';
 import { kmToMiles, milesToKm } from '../../utils/units.js';
@@ -39,6 +39,7 @@ export interface EventsCommandDeps {
   eventRepository: IEventRepository;
   eventListingRepository: IEventListingRepository;
   userSettingsRepository: IUserSettingsRepository;
+  eventNavigationContext: IEventNavigationContext;
   // The global location fallback. When the user has not configured
   // their own location, the /events command uses this so the bot
   // still has a useful default behaviour. The radius here is in
@@ -115,10 +116,8 @@ export async function renderEventList(
     (a, b) => new Date(a.startDatetime).getTime() - new Date(b.startDatetime).getTime(),
   );
 
-  // Store in pagination state for Prev/Next navigation
-  if (userId != null) {
-    eventsPaginationState.set(userId, sorted, days);
-  }
+  // Remember the successful filtered and sorted list for page and Back-to-list navigation.
+  deps.eventNavigationContext.rememberEventList(userId, sorted, days);
 
   await renderEventListWithPage(ctx, deps, sorted, days, 0);
 }
@@ -191,16 +190,12 @@ export async function renderEventDetail(
     }
   }
 
-  // Default: show "Back to list" only when the user has a list
-  // context (eventsPaginationState, set by renderEventList) AND this
-  // event was not opened directly via /events <id> or a locator URL
-  // (eventDetailOrigin, per-event). A direct fetch marks the origin
-  // so the button stays hidden across leaderboard/rounds →
-  // back-to-event round trips, even if a stale "Back to list" tap
-  // re-arms the pagination state.
+  // Default: show "Back to list" only when the user has a live list
+  // context and this event was not opened directly. Direct-origin
+  // suppression remains on the legacy marker until its later migration.
   const showBackToList = options?.showBackToList
     ?? (userId != null
-      && eventsPaginationState.get(userId) != null
+      && deps.eventNavigationContext.getEventList(userId) != null
       && !eventDetailOrigin.isDirect(userId, id));
   const result = formatEventDetail(event, registrations, {
     privateChat: ctx.chat?.type === 'private',
@@ -254,10 +249,9 @@ async function renderEventListWithPage(
 }
 
 // ---------------------------------------------------------------------------
-// renderEventsPage — Called from the Prev/Next callback. Reads stored
-// pagination state and renders the requested page. Falls back to refetch
-// if the state expired.
-// ---------------------------------------------------------------------------
+// renderEventsPage — Called from the Prev/Next callback. Reads the shared
+// navigation context and renders the requested page. Falls back to refetch
+// if the context expired.
 
 export async function renderEventsPage(
   ctx: Context,
@@ -267,9 +261,9 @@ export async function renderEventsPage(
   const userId = ctx.from?.id;
   if (userId == null) return;
 
-  const state = eventsPaginationState.get(userId);
+  const state = deps.eventNavigationContext.getEventList(userId);
   if (!state) {
-    // State expired or never set — refetch and re-render from page 0.
+    // Context expired or was never set — refetch and re-render from page 0.
     await renderEventList(ctx, deps, deps.daysAhead);
     return;
   }
@@ -352,13 +346,11 @@ export function createEventsCommand(deps: EventsCommandDeps) {
         await ctx.reply('Could not read the event id. Use a bare number or a locator URL.');
         return;
       }
-      // No list context exists for an id/URL fetch: clear any stale
-      // list state and mark this event as direct so the detail page
-      // (and callbacks that re-render it, e.g. leaderboard →
-      // back-to-event) keep hiding "Back to list".
+      // Clear the shared list context while retaining the legacy direct-origin
+      // marker and explicit detail override until the direct-origin migration.
       const userId = ctx.from?.id;
       if (userId != null) {
-        eventsPaginationState.clear(userId);
+        deps.eventNavigationContext.openEventDirectly(userId, id);
         eventDetailOrigin.markDirect(userId, id);
       }
       await renderEventDetail(ctx, deps, id, { showBackToList: false });

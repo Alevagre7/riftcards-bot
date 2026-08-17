@@ -17,7 +17,7 @@ import {
 } from '../commands/events.js';
 import { formatEventLeaderboard } from '../formatters/event-leaderboard-formatter.js';
 import { formatEventRounds } from '../formatters/event-rounds-formatter.js';
-import { eventsPaginationState } from '../state/events-pagination-state.js';
+import type { IEventNavigationContext } from '../state/event-navigation-context.js';
 import { eventDetailOrigin } from '../state/event-detail-origin.js';
 import { escapeHtml } from '../formatters/card-formatter.js';
 import { formatEventWatchStatus, formatNoEventWatch } from '../formatters/event-watch-formatter.js';
@@ -27,6 +27,7 @@ interface EventActionDeps {
   eventListingRepository: IEventListingRepository;
   watchManager: IEventWatchManager;
   userSettingsRepository: IUserSettingsRepository;
+  eventNavigationContext: IEventNavigationContext;
   defaultLocation: EventLocation;
   daysAhead: number;
   adminTelegramIds: number[];
@@ -93,24 +94,22 @@ export function createEventActionHandler(deps: EventActionDeps) {
       return;
     }
 
-    // Back to list — use the window the user last picked, not the
-    // config default. The state is set by renderEventList itself;
-    // when no prior pick (state missing or 5-min TTL expired), fall
-    // back to deps.daysAhead.
+    // Back to list uses the remembered window when a live list context exists.
+    // A missing or expired context falls back to the configured default.
     if (data === 'event:list') {
-      const userId = ctx.from?.id;
-      const stored = userId != null ? eventsPaginationState.get(userId) : null;
+      const stored = deps.eventNavigationContext.getEventList(ctx.from?.id);
       const days = stored?.daysAhead ?? deps.daysAhead;
       await renderEventList(ctx, deps, days);
       return;
     }
 
-    // Event opened from an actual list row. Clear a marker left by a
-    // previous `/events <id>` direct lookup for this same event.
+    // Event opened from an actual list row. Clear both the shared context's
+    // marker and the legacy marker until direct-origin migration completes.
     const listEventMatch = /^event:list:(\d+)$/.exec(data);
     if (listEventMatch) {
       const eventId = parseInt(listEventMatch[1]!, 10);
       const userId = ctx.from?.id;
+      deps.eventNavigationContext.openEventFromList(userId, eventId);
       if (userId != null) eventDetailOrigin.clear(userId, eventId);
       await renderEventDetail(ctx, deps, eventId);
       return;
