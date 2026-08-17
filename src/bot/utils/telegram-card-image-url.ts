@@ -2,11 +2,11 @@ const RIOT_SANITY_HOST = 'cmsassets.rgpub.io';
 const SANITY_IMAGES_PATH = '/sanity/images/';
 
 /**
- * Returns the stable Riot/Sanity URL used when Telegram receives a card photo.
+ * Returns the URL used when Telegram receives a card photo.
  *
  * Card.imageUrl intentionally remains the original upstream URL. This helper
- * is a Telegram presentation concern and only rewrites the known Riot asset
- * CDN URLs to pin their response format to PNG.
+ * is a Telegram presentation concern: Sanity-hosted media is pinned to JPEG
+ * quality 90 because InlineQueryResultPhoto.photo_url requires JPEG.
  */
 export function toTelegramCardImageUrl(imageUrl: string): string {
   let url: URL;
@@ -28,6 +28,7 @@ export function toTelegramCardImageUrl(imageUrl: string): string {
     return imageUrl;
   }
 
-  url.searchParams.set('fm', 'png');
+  url.searchParams.set('fm', 'jpg');
+  url.searchParams.set('q', '90');
   return url.toString();
 }

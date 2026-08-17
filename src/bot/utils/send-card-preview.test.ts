@@ -5,7 +5,7 @@ import { sendCardPreview } from './send-card-preview.js';
 
 const RIOT_IMAGE_URL =
   'https://cmsassets.rgpub.io/sanity/images/dsfx7636/game_data_live/e49461109a4116c22af9206719f53fb73aee36d0-744x1039.png?accountingTag=RB';
-const RIOT_PNG_URL = `${RIOT_IMAGE_URL}&fm=png`;
+const RIOT_JPEG_URL = `${RIOT_IMAGE_URL}&fm=jpg&q=90`;
 
 function card(over: Partial<Card> = {}): Card {
   return {
@@ -35,12 +35,12 @@ function context(): {
 }
 
 describe('sendCardPreview', () => {
-  it('sends an eligible Riot image using the stable PNG URL', async () => {
+  it('sends an eligible Riot image using the stable JPEG URL', async () => {
     const { ctx, replyWithPhoto } = context();
 
     await sendCardPreview(ctx, card({ imageUrl: RIOT_IMAGE_URL }));
 
-    expect(replyWithPhoto).toHaveBeenCalledWith(RIOT_PNG_URL, {
+    expect(replyWithPhoto).toHaveBeenCalledWith(RIOT_JPEG_URL, {
       caption: 'Shady Spectacles',
       parse_mode: 'HTML',
     });

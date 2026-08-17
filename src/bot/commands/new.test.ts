@@ -120,12 +120,12 @@ describe('new command card image payloads', () => {
       },
       {
         type: 'photo',
-        media: `${RIOT_UNL_URL}&fm=png`,
+        media: `${RIOT_UNL_URL}&fm=jpg&q=90`,
         caption: 'Ruined Rex',
       },
       {
         type: 'photo',
-        media: `${RIOT_VEN_URL}&fm=png`,
+        media: `${RIOT_VEN_URL}&fm=jpg&q=90`,
         caption: 'Shady Spectacles',
       },
     ]);
@@ -147,7 +147,7 @@ describe('new command card image payloads', () => {
     expect(replyWithMediaGroup.mock.calls[0]![0]).toHaveLength(10);
     expect(replyWithMediaGroup.mock.calls[1]![0]).toHaveLength(1);
     expect(replyWithMediaGroup.mock.calls.flatMap(([media]) => media).every(
-      (item: { media: string }) => item.media === `${RIOT_VEN_URL}&fm=png`,
+      (item: { media: string }) => item.media === `${RIOT_VEN_URL}&fm=jpg&q=90`,
     )).toBe(true);
   });
 });
