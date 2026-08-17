@@ -11,33 +11,34 @@ const VEN_174_URL =
 
 describe('toTelegramCardImageUrl', () => {
   it('pins the VEN-137 source to JPEG quality 90 while preserving the source query', () => {
-    expect(toTelegramCardImageUrl(VEN_137_URL)).toBe(`${VEN_137_URL}&fm=jpg&q=90`);
+    expect(toTelegramCardImageUrl(VEN_137_URL)).toBe(`${VEN_137_URL}&fm=jpg&q=90&tg_media=jpeg-v2`);
   });
 
   it('pins the UNL-067 source to JPEG quality 90', () => {
-    expect(toTelegramCardImageUrl(UNL_067_URL)).toBe(`${UNL_067_URL}&fm=jpg&q=90`);
+    expect(toTelegramCardImageUrl(UNL_067_URL)).toBe(`${UNL_067_URL}&fm=jpg&q=90&tg_media=jpeg-v2`);
   });
 
   it('pins the VEN-174 source to JPEG quality 90', () => {
-    expect(toTelegramCardImageUrl(VEN_174_URL)).toBe(`${VEN_174_URL}&fm=jpg&q=90`);
+    expect(toTelegramCardImageUrl(VEN_174_URL)).toBe(`${VEN_174_URL}&fm=jpg&q=90&tg_media=jpeg-v2`);
   });
 
   it('preserves unrelated parameters and fragments', () => {
     const source = `${VEN_137_URL}&auto=format&w=744#card-image`;
 
     expect(toTelegramCardImageUrl(source)).toBe(
-      `${VEN_137_URL}&auto=format&w=744&fm=jpg&q=90#card-image`,
+      `${VEN_137_URL}&auto=format&w=744&fm=jpg&q=90&tg_media=jpeg-v2#card-image`,
     );
   });
 
   it('replaces duplicate fm and q parameters without disturbing other parameters', () => {
     const source =
-      'https://cmsassets.rgpub.io/sanity/images/project/dataset/asset.png?fm=jpg&accountingTag=RB&fm=webp&q=75&q=60';
+      'https://cmsassets.rgpub.io/sanity/images/project/dataset/asset.png?fm=jpg&accountingTag=RB&fm=webp&q=75&q=60&tg_media=old&tg_media=stale';
     const transformed = new URL(toTelegramCardImageUrl(source));
 
     expect(transformed.searchParams.getAll('fm')).toEqual(['jpg']);
     expect(transformed.searchParams.getAll('q')).toEqual(['90']);
     expect(transformed.searchParams.get('accountingTag')).toBe('RB');
+    expect(transformed.searchParams.getAll('tg_media')).toEqual(['jpeg-v2']);
   });
 
 

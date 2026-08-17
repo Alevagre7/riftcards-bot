@@ -1,5 +1,6 @@
 const RIOT_SANITY_HOST = 'cmsassets.rgpub.io';
 const SANITY_IMAGES_PATH = '/sanity/images/';
+const TELEGRAM_MEDIA_REVISION = 'jpeg-v2';
 
 /**
  * Returns the URL used when Telegram receives a card photo.
@@ -30,5 +31,6 @@ export function toTelegramCardImageUrl(imageUrl: string): string {
 
   url.searchParams.set('fm', 'jpg');
   url.searchParams.set('q', '90');
+  url.searchParams.set('tg_media', TELEGRAM_MEDIA_REVISION);
   return url.toString();
 }

@@ -6,10 +6,10 @@ import { createInlineQueryHandler } from './inline-query.js';
 
 const RIOT_IMAGE_URL =
   'https://cmsassets.rgpub.io/sanity/images/dsfx7636/game_data_live/e49461109a4116c22af9206719f53fb73aee36d0-744x1039.png?accountingTag=RB';
-const RIOT_JPEG_URL = `${RIOT_IMAGE_URL}&fm=jpg&q=90`;
+const RIOT_JPEG_URL = `${RIOT_IMAGE_URL}&fm=jpg&q=90&tg_media=jpeg-v2`;
 const VEN_174_URL =
   'https://cmsassets.rgpub.io/sanity/images/dsfx7636/game_data_live/45d83debda443f1bf88e1cf7123eb8b844143124-744x1039.png?accountingTag=RB';
-const VEN_174_JPEG_URL = `${VEN_174_URL}&fm=jpg&q=90`;
+const VEN_174_JPEG_URL = `${VEN_174_URL}&fm=jpg&q=90&tg_media=jpeg-v2`;
 
 function card(over: Partial<Card> = {}): Card {
   return {
