@@ -17,9 +17,7 @@ La conclusión es concreta:
 - No se ha encontrado una señal pública demostrada para `CANCELLED`, conflicto entre
   reportes o empate intencional/no intencional. Esos estados deben quedar como
   desconocidos para Play, no inferirse de una ausencia o de un `TIE`.
-- `/mytable` no tiene una sustitución pública equivalente basada solo en un
-  nombre de usuario. Play permite obtener el estado de un jugador dentro de un
-  torneo conocido; no se encontró una operación pública demostrada que busque el torneo actual de cualquier usuario sin sesión Riot.
+- Para `/mytable` hay ahora una ruta pública comprobada por **tienda + día + nombre del jugador**. La web de Nexus también exige tienda; no era una búsqueda global por nombre. El bot actual omite `store_id`. Véase la ampliación al final y el diseño de selección inicial de tienda.
 
 ## Fuentes primarias y versión observada
 
@@ -262,25 +260,29 @@ dos jugadores por equipo.
 
 ## `/mytable` y la identidad de jugador
 
-`/mytable` usa un adapter separado (`NexusTableAdapter`) y un endpoint
-username-only configurado en [`src/config.ts`](../../src/config.ts). No se
-convierte automáticamente al cambiar el proveedor de eventos.
+La ampliación de esta investigación encontró el contexto que faltaba en el contrato del bot: el [frontend público de Nexus](https://riftboundtoolkit.netlify.app/assets/index-CwWfBzOP.js) exige seleccionar tienda y llama al endpoint con `action=status`, `username` y **`store_id`**. En el código aparecen la validación `Please select a store` y `searchParams.set("store_id", String(...))` antes del lookup. `NexusTableAdapter` del bot solo envía los dos primeros parámetros. Por tanto, no se debe caracterizar el servicio como una búsqueda global por nombre ni interpretar una respuesta sin evento como prueba de que Riot no puede sustituirla.
 
-Play sí devuelve `player.id` y `displayName` dentro de un torneo conocido. Su
-operación `PlayerTournaments` no recibe un nombre de usuario: devuelve los
-torneos del jugador autenticado y, sin sesión, respondió HTTP 200 con
-`UNAUTHENTICATED`. `GetPlayer` consulta `pickemPlayer`, que pertenece a otra
-función y tampoco resuelve el “torneo actual” de un nombre arbitrario.
+La consulta [Nexus stores para Sevilla](https://riftboundtoolkit.netlify.app/.netlify/functions/nexus-table?action=stores&city=Sevilla) respondió HTTP 200 con 13 tiendas, incluyendo JUPITER JUEGOS SEVILLA (`storeId: 15334`). Esa identidad antigua numérica no es el UUID del organizador Riot; no se debe convertir uno al otro por coincidencia de nombres.
 
-La sustitución pública demostrada consiste en vincular al usuario del bot a una
-identidad estable dentro de un evento (`eventId` + `player.id`) y leer el
-detalle de ese evento. Eso permite conservar una vista de mesa para un watch o
-evento seleccionado, pero no conserva la semántica actual de
-consulta por nombre publicada para `/mytable <username>` (el ámbito del lookup Nexus depende del servicio y su tienda; no se ha demostrado que sea global). Además, el parser actual del bot rechaza ese argumento directo y solo llega al lookup con `/mytable show <username>`; es una discrepancia ya existente entre ayuda e implementación que debe corregirse al conservar el flujo. Para conservar
-esa orden sin una cuenta Riot o una nueva fuente pública, el estado es
-**no resoluble con la evidencia actual**. El análisis de migración contiene el
-plan de coexistencia y la evidencia de Nexus para esta decisión:
-[`events-migration-impact-2026-10.md`](./events-migration-impact-2026-10.md).
+Se probó una ruta pública equivalente en Riot sin sesión:
+
+1. `CompeteTournamentSearch` con coordenadas de Júpiter, radio de 1000 metros, `startDate=2026-10-16T00:00:00Z`, `first=20` y `sortBy.rb=DATE` devolvió cinco entradas y `hasNextPage=false`.
+2. Filtrar por el UUID del organizador y el día comprobado dejó un torneo: `117093196872746571`.
+3. El detalle público permitió resolver de forma única un nombre y tagline de su roster al mismo `player.id` conocido de la muestra.
+4. La unión con participantes y equipos recuperó ronda 3, mesa, un rival, outcome `WIN`, standings y registro W/L/D. No se imprimieron nombres personales ni se modificó estado del bot o del torneo.
+
+Este resultado es una **prueba de viabilidad del lookup por tienda/día/jugador en un torneo real 1v1**. No es una prueba de una implementación terminada ni de búsqueda global. Para conservar el flujo publicado, hace falta:
+
+- guardar un organizador Riot seleccionado y el nombre/identidad de consulta, por separado del watch;
+- permitir elegir tienda desde `/events` o una lista de organizadores con eventos cerca de la ubicación guardada; ofrecer selección explícita cuando falte configuración;
+- conservar `/mytable`, `/mytable set`, `/mytable clear` y el lookup puntual por nombre, corrigiendo el parser que hoy rechaza `/mytable <username>`;
+- no asumir que la persona observada en Watch es el propio jugador: vincularla a `/mytable` solo por selección explícita;
+- resolver nombre/tagline exacto o pedir selección si hay varias coincidencias; no elegir al primer jugador;
+- recorrer los eventos candidatos del día y del organizador, con paginación y zona horaria definidas. Usar una sola muestra no resuelve múltiples torneos, cambio de día, ni una ronda aún sin publicar;
+- guardar la preferencia de tienda/jugador independiente del watch, para que `/watching stop` o cambiar de persona observada no borre ni sustituya la configuración de `/mytable`.
+
+La consulta `PlayerTournaments` sigue exigiendo sesión Riot y no recibe un username arbitrario. Eso afecta a la alternativa de usar “My Events” como atajo, pero **no bloquea el lookup público por tienda comprobado arriba**. El bot no necesita copiar una sesión de Riot para consultar ese detalle público.
+
 
 ## Diseño de reemplazo que preserva lo que sí está disponible
 
@@ -341,9 +343,49 @@ atravesando adapter y servicios:
 
 Quedan explícitamente fuera de la paridad pública demostrada: la cancelación
 explícita, el conflicto entre reportes, el subtipo intencional/no intencional
-de empate, la detección automática del torneo en `/mytable` por nombre y la prueba de un
-payload 2v2 real. Se necesita una fuente o fixture adicional para cerrar cada
+de empate, la prueba de un payload 2v2 real y la verificación de los casos múltiples/ambiguos del lookup por tienda de `/mytable`. Se necesita una fuente o fixture adicional para cerrar cada
 uno de esos puntos. UVS puede conservarse solo para históricos durante una
 transición controlada; el locator oficial ya remite los eventos de tienda
 actuales a PlayRiftbound y no debe usarse como fallback operativo de eventos
 nuevos.
+
+## Comprobación adicional de documentación oficial
+
+Se revisaron el anuncio de lanzamiento, la interfaz pública de eventos, el
+Rules Hub y el changelog vigente, el catálogo de APIs de Riot y el catálogo de
+soporte de Riftbound el 16 de octubre de 2026:
+
+- [Introducing the New PlayRiftbound.com](https://playriftbound.com/en-us/news/announcements/introducing-the-new-playriftboundcom/)
+  confirma que PlayRiftbound sustituye a carde.io para buscar, registrar y
+  ejecutar eventos; también dice que la plataforma incorpora los emparejamientos
+  y el registro de resultados. El acceso de jugadores se basa en Riot ID y el
+  propio anuncio avisa de que los proyectos de la comunidad que dependían de
+  carde.io pueden sufrir interrupciones.
+- La página pública de [Riftbound Events](https://playriftbound.com/en-US/events/)
+  expone únicamente los flujos `Find an Event` y `My Events`. No documenta un
+  buscador anónimo por nombre de jugador ni una consulta de “evento actual”.
+- El [Rules Hub](https://playriftbound.com/en-us/rules-hub/) enlaza las reglas
+  actuales, y el [October 2026 Tournament Rules Changelog](https://playriftbound.com/en-us/news/announcements/october-2026-tournament-rules-changelog/)
+  confirma que entraron en vigor con el Pre-Rift del 16 de octubre. Las reglas
+  públicas describen al scorekeeper y a los jueces como responsables de
+  generar rondas, resolver problemas de puntuación y atender apelaciones; no
+  publican un estado de torneo `CANCELLED`, un flujo de conflicto de reportes ni
+  un contrato de lectura para un bot externo.
+- El [catálogo oficial de APIs de Riot](https://developer.riotgames.com/apis)
+  lista para Riftbound `riftbound-content-v1` y `account-v1 Riftbound RSO`, pero
+  no lista una API de eventos, torneos, pairings o resultados. La
+  [política de desarrolladores de Riftbound](https://developer.riotgames.com/policies/riftbound)
+  exige registrar cualquier producto que sirva a jugadores incluso cuando no
+  use APIs oficiales documentadas. La accesibilidad de las consultas del frontend no demuestra un contrato de API documentado ni una garantía de compatibilidad; el mecanismo de hashes observado debe tratarse como una dependencia que puede cambiar.
+- El [catálogo de soporte de eventos](https://support.riotgames.com/en-us/riftbound/events/)
+  solo enlaza el FAQ general de Riftbound; no añade documentación de consultas
+  de eventos, cancelaciones o disputas. El FAQ remite las incidencias generales
+  a un ticket de soporte.
+
+### Resultado de la comprobación
+
+No se encontró en estas fuentes oficiales una señal pública que permita derivar con precisión la cancelación del torneo, un conflicto entre reportes o el subtipo de empate. Las fuentes explican el papel de organizadores, scorekeepers y jueces en la gestión/corrección de resultados, pero eso no publica un contrato de lectura de esos estados para terceros. El mapper debe representar la falta de dato sin inventarlo, y **esa representación no cuenta como paridad completa**.
+
+Para `/mytable`, esta revisión documental no encontró un endpoint de búsqueda global por username. La investigación posterior del frontend Nexus demostró que ese servicio también requiere tienda y que el bot la omite. La ruta pública por organizador/día/roster de Riot sí devolvió mesa, rival y resultado en la prueba descrita arriba. No es necesario recurrir a una sesión Riot para ese lookup acotado. `PlayerTournaments` queda como alternativa autenticada del propio jugador, sin demostrar acceso a los torneos de un usuario arbitrario.
+
+El resultado negativo sobre cancelación y reportes queda acotado a las fuentes públicas comprobadas: no demuestra que Riot carezca de un endpoint autorizado para organizadores. Para cerrar la conservación literal de esas señales hace falta documentación o una fuente que las exponga de forma inequívoca; no basta con reinterpretar `TIE`, una fecha pasada o una lista vacía.
