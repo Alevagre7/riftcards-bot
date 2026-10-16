@@ -12,7 +12,7 @@ El producto y la identidad del proveedor están confirmados por el anuncio ofici
 
 Fuente primaria: [Introducing the New PlayRiftbound.com](https://playriftbound.com/en-us/news/announcements/introducing-the-new-playriftboundcom/) (Riot, 2026-09-04; ver especialmente las secciones sobre la migración y el motivo del cambio).
 
-El locator antiguo de UVS (`locator.riftbound.uvsgames.com`) sigue accesible para datos históricos o eventos antiguos, pero no es el backend del buscador nuevo. El buscador actual es visible en [Play Riftbound — Events](https://playriftbound.com/en-US/events/).
+El locator antiguo de UVS (`locator.riftbound.uvsgames.com`) sigue accesible y su aviso oficial indica que desde el **15 de octubre de 2026** ya no sirve para buscar, organizar o registrar eventos de tienda. Las consultas históricas probadas aún responden; no debe usarse UVS como fallback de eventos actuales. El buscador actual es visible en [Play Riftbound — Events](https://playriftbound.com/en-US/events/).
 
 ## Evidencia del frontend y del transporte
 

@@ -42,6 +42,16 @@ Los bloqueos que deben resolverse antes de activar eventos nuevos son:
 | P1 | El watcher termina el watch antes de procesar la última pairing cuando detecta evento finalizado o jugador fuera ([`event-watcher.ts:215-243`](../../src/bot/services/event-watcher.ts#L215)). | El resultado de la ronda final puede no notificarse; `DROPPED`/`ELIMINATED` debe derivarse de participantes, no de registros. |
 | P2 | El enlace de detalle siempre apunta al locator UVS ([`event-detail-formatter.ts:157-159`](../../src/bot/formatters/event-detail-formatter.ts#L157)). | El usuario abre una página que no conoce el ID Play. |
 
+## Decisión de fuente tras el cierre de UVS
+
+El [locator oficial de UVS](https://locator.riftbound.uvsgames.com/) informa que desde el **15 de octubre de 2026** ya no permite buscar, organizar o registrar eventos de tienda y remite a PlayRiftbound. Esto actualiza la estrategia propuesta: **PlayRiftbound debe ser la única fuente operativa para torneos nuevos; UVS no debe ser fallback de búsquedas actuales**. Una caída de Riot debe mostrarse como fallo recuperable, no como una lista vacía procedente de un catálogo retirado.
+
+Las peticiones de lectura de esta investigación aún obtuvieron HTTP 200 para el evento UVS `799609`, sus 11 registros y los matches/standings de la ronda `1172657`. Eso demuestra disponibilidad histórica de esos recursos, no cobertura de eventos actuales. UVS se puede conservar separado para referencias antiguas y watches ya guardados; no como sustituto de Riot ante errores.
+
+En una comprobación de solo lectura del contenedor desplegado se encontró **un watch persistido** y la columna `event_id INTEGER`. Por tanto, preservar las filas antiguas es un requisito real de despliegue, no solo una hipótesis de diseño. No se mostraron ni modificaron datos personales o filas de usuario.
+
+Si se conserva Riftfound como agregador opcional, seguirá necesitando las correcciones de schema, fechas y deduplicación descritas abajo. Esas correcciones no son necesarias para un diseño que lo retire del camino operativo y consulte Riot directamente. Ninguna opción debe volver a enviar un ID `prb-…` al detalle UVS.
+
 ## 1. Fuente y composición de adapters
 
 ### Estado observado
@@ -572,8 +582,7 @@ por esta causa.
 
 ## Orden recomendado de implementación
 
-1. Fijar el contrato `EventRef`, `PlayerRef` y `RoundRef`, y decidir la
-   estrategia de coexistencia UVS/Play.
+1. Fijar el contrato `EventRef`, `PlayerRef` y `RoundRef`: Riot para eventos nuevos, UVS separado para referencias históricas y filas existentes, sin fallback operativo a UVS.
 2. Añadir migración SQLite y callbacks compactos antes de generar botones Play.
 3. Implementar el cliente GraphQL con validación de `errors`, cursor, metros,
    IDs de texto y clasificación de errores.
@@ -638,3 +647,41 @@ Antes de activar el proveedor deben existir fixtures representativas y anonimiza
 6. conservación de watches UVS y aislamiento entre proveedores;
 7. respuesta parcial, tipos desconocidos y estados no soportados sin inventar resultados;
 8. lectura pública real y, después de implementar, una prueba autorizada en Telegram del flujo Watch completo. Las comprobaciones de esta investigación no son esa prueba de extremo a extremo.
+
+## Cierre de investigación: `/mytable` y búsqueda de identidad
+
+La funcionalidad publicada de `/mytable` incluye consulta por nombre guardado, consulta puntual `/mytable <username>`, guardar nombre y borrarlo. Su adaptador llama al [endpoint Nexus](https://riftboundtoolkit.netlify.app/.netlify/functions/nexus-table?action=status&username=riftbot-audit-nonexistent), no directamente a UVS.
+
+En esta ampliación, el endpoint devolvió HTTP 200 con `event`, `round`, `table` y `standings` nulos y el mensaje `No event found for today at the selected store`. Se repitió con el nombre público de un inscrito del detalle Riot comprobado y devolvió la misma respuesta. **No demuestra que Nexus esté caído ni que soporte los torneos nuevos**: el mensaje puede depender de la tienda y fecha que consulta el servicio. No se debe presentar como una migración ya resuelta.
+
+Se probó la operación pública registrada `PlayerTournaments` de Riot, hash `325210614006360e6f6bda3de390704e7f974f16f4d20361a1a3f29fb2101fd7`, con variables `{ "pastFirst": 1, "upcomingFirst": 1 }`, las cabeceras Apollo y sin sesión. Respondió HTTP 200 con `data: null` y `errors[].extensions.classification: UNAUTHENTICATED`. El mensaje fue `The player is not authenticated`. El cuerpo del manifiesto no acepta un nombre de usuario arbitrario: solo paginación de torneos pasados/futuros del jugador autenticado. `GetPlayer` tampoco sustituye ese lookup: consulta `pickemPlayer`, no la identidad de un participante de Compete.
+
+La vía pública demostrada para localizar mesa y resultado es **evento conocido + `player.id` estable**: el detalle contiene el roster, los equipos y sus matches. Puede alimentar `/mytable` a partir del watch o de una selección previa del jugador/evento y conservar los campos mesa, rival, ronda y standings. Eso requiere guardar la identidad elegida y modificar las ayudas de nombre/validación (`nexus-username.ts` no admite actualmente el separador `#` de Riot ID).
+
+No está demostrado un sustituto público equivalente a buscar automáticamente el torneo de cualquier nombre, sin conocer el evento. Recorrer rosters cercanos es una alternativa de alcance limitado, con ambigüedad de nombres, coste y cobertura geográfica distintos; no cuenta como conservación exacta del lookup actual. La aprobación de una integración oficial autenticada tampoco está implícita en que una sesión de la web tenga acceso: no se deben copiar cookies ni credenciales de Riot al bot.
+
+**Criterio para poder afirmar paridad:** `/mytable` debe obtener mesa/rival/resultado de un torneo Riot real para el jugador seleccionado, conservar `set`/`clear` y el lookup puntual, resolver ambigüedad sin elegir otro jugador y cubrir el caso sin watch activo. Mientras falte una fuente o un diseño comprobado para la detección automática por nombre, este punto sigue abierto. Mantener Nexus sin cambios conserva el código de ese comando; no demuestra su cobertura de la nueva plataforma.
+
+## Callback compacto: prueba de viabilidad sin tabla de tokens
+
+Se ejecutó una prueba aislada de codificación/decodificación, sin modificar handlers. El formato candidato `wpr:<eventId-base36>:<registrationUUID-base64url>:<revision>` reserva el prefijo para Watch/Play/Replace. Convierte IDs exclusivamente con `BigInt` y conserva revisiones antiguas de 32 dígitos hexadecimales como bytes en base64url; las revisiones actuales de 17 caracteres usan un marcador de tipo y su texto original.
+
+- ID real de 18 dígitos + UUID + revisión actual: **57 bytes**.
+- Entero máximo unsigned de 64 bits (`18446744073709551615`) + UUID + revisión antigua de 32 caracteres: **64 bytes**.
+- Las tres identidades recuperadas coincidieron exactamente con las originales en ambos casos.
+
+Esto demuestra que el límite de Telegram es resoluble sin truncar IDs, sin reducir revisiones y sin introducir necesariamente un almacenamiento de tokens. No prueba que todos los formatos futuros de ID quepan. El codec de producción debe validar el formato de origen, fallar de manera explícita ante una longitud superior, mantener el proveedor y acción en la versión del protocolo y probar por separado cada callback de rondas, selección, reemplazo y administración. La decodificación base36 debe usar `BigInt` carácter a carácter; `parseInt` volvería a perder precisión.
+
+Los botones existentes UVS y las revisiones guardadas deben seguir decodificándose durante la transición. La resolución del token no sustituye las comprobaciones actuales de chat privado, propietario, permisos de administrador y revisión vigente.
+
+### Discrepancia existente en el parser de `/mytable`
+
+La ayuda anuncia `/mytable <username>`, pero `parseAction` en `src/bot/commands/mytable.ts` solo reconoce argumento vacío, `show`, `set` o `clear`. Una prueba aislada del handler compilado con contexto simulado confirmó que `/mytable audit-user` devuelve `Usage` sin llamar al repositorio, mientras que `/mytable show audit-user` sí llega al lookup. No se hizo una petición externa en esta prueba.
+
+Al sustituir el proveedor se debe cubrir y conservar la funcionalidad publicada: nombre guardado, `set`, `clear`, lookup puntual y manejo de múltiples coincidencias. Esa conservación necesita corregir también el parser; no basta con que el puerto nuevo se parezca al antiguo. La prueba de aceptación debe comprobar ambos formatos y las identidades Riot con `#tagLine`.
+
+## Referencias de cierre y alcance de la garantía
+
+El [informe de huecos de paridad](events-api-parity-gaps-2026-10.md) comprueba cancelación, conflicto/subtipo de empate, varias fases, equipos y alternativas de consulta de jugador. El catálogo GraphQL genérico `tournaments` no devolvió el torneo de muestra al consultarlo por el mismo ID Play; su campo `state` no es una señal de cancelación demostrada para ese torneo.
+
+La investigación demuestra una ruta de implementación para listado, detalle, roster, rondas, leaderboard y Watch 1v1, y una solución de precisión/persistencia/callbacks. No demuestra todavía preservación literal del **100 %** de las señales antiguas ni del lookup automático de jugador de Nexus. La cancelación explícita, el conflicto/subtipo de empate y la detección de torneo por nombre necesitan una fuente adicional o una integración autorizada y documentada; la compatibilidad 2v2/multifase necesita muestras y pruebas más amplias. Marcar esos casos como desconocidos evita inventar datos, pero no cuenta como paridad completa.
