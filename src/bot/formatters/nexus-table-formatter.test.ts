@@ -8,9 +8,10 @@ function baseTable(over: Partial<NexusTable> = {}): NexusTable {
     event: {
       id: 'evt-001',
       name: 'Weekly Nexus Night',
-      store: { id: 'str-001', name: 'Card Castle', address: '123 Main St' },
+      store: { id: 'str-001', name: 'Card Castle', address: '123 Main St', timezone: 'Europe/Madrid' },
       startDate: new Date('2026-07-29T18:00:00Z'),
       format: 'Standard',
+      locatorUrl: 'https://playriftbound.com/en-US/events/evt-001',
     },
     round: { number: 3, label: 'Round 3', status: 'inProgress', result: null },
     tableNumber: 5,
@@ -26,13 +27,41 @@ function baseTable(over: Partial<NexusTable> = {}): NexusTable {
 describe('formatNexusTable', () => {
   it('includes the username in the header', () => {
     const out = formatNexusTable(baseTable());
-    expect(out).toContain('<b>Nexus Table \u2014 TestPlayer</b>');
+    expect(out).toContain('<b>My table \u2014 TestPlayer</b>');
+  });
+
+  it.each([
+    ['win', 'Win'], ['loss', 'Loss'], ['draw', 'Draw'], ['bye', 'Bye'],
+  ] as const)('shows the official player result %s', (result, label) => {
+    const value = baseTable({ round: { number: 3, label: 'Round 3', status: 'completed', result } });
+    expect(formatNexusTable(value)).toContain(`Result: ${label}`);
   });
 
   it('includes event name and store', () => {
     const out = formatNexusTable(baseTable());
     expect(out).toContain('Weekly Nexus Night');
     expect(out).toContain('Card Castle');
+  });
+
+  it('formats the event date in the selected store timezone', () => {
+    const out = formatNexusTable(
+      baseTable({
+        event: {
+          id: 'evt-001',
+          name: 'Late Event',
+          store: {
+            id: 'str-001',
+            name: 'Card Castle',
+            address: '123 Main St',
+            timezone: 'Europe/Madrid',
+          },
+          startDate: new Date('2026-07-29T23:30:00Z'),
+          format: 'Standard',
+        },
+      }),
+    );
+
+    expect(out).toContain('Thu 30 Jul');
   });
 
   it('includes round and table number', () => {
@@ -113,7 +142,7 @@ describe('formatNexusTable', () => {
 
   it('includes locator link when event is present', () => {
     const out = formatNexusTable(baseTable());
-    expect(out).toContain('https://locator.riftbound.uvsgames.com/events/evt-001');
+    expect(out).toContain('https://playriftbound.com/en-US/events/evt-001');
   });
 
   it('omits locator link when event is null', () => {
@@ -127,7 +156,7 @@ describe('formatNexusTable', () => {
     const out = formatNexusTable(
       baseTable({ event: null, round: null, tableNumber: null, opponent: null, standings: null }),
     );
-    expect(out).toContain('No active pairing for TestPlayer');
+    expect(out).toContain('No table found for TestPlayer at your selected store today');
   });
 
   it('escapes HTML in username', () => {

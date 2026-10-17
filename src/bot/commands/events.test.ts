@@ -50,6 +50,9 @@ function mockUserSettingsRepo(): IUserSettingsRepository & {
     getNexusUsername: vi.fn().mockResolvedValue(null),
     setNexusUsername: vi.fn().mockResolvedValue(undefined),
     clearNexusUsername: vi.fn().mockResolvedValue(undefined),
+    getMytableStore: vi.fn().mockResolvedValue(null),
+    setMytableStore: vi.fn().mockResolvedValue(undefined),
+    clearMytableStore: vi.fn().mockResolvedValue(undefined),
   };
 }
 
@@ -261,6 +264,18 @@ describe('createEventsCommand — /events <id> and <url> debug path', () => {
 
     const texts = (getReplyKeyboard(ctx)?.inline_keyboard ?? []).flat().map((button) => button.text);
     expect(texts).not.toContain('\u2190 Back to list');
+  });
+
+  it.each([
+    '/events https://events.playriftbound.com/en-US/events/117093196872746571',
+    '/events 117093196872746571',
+  ])('preserves the exact Riot identity from %s', async (text) => {
+    const id = 'riot:117093196872746571';
+    (eventRepo.getEventById as Mock).mockResolvedValueOnce(baseEvent({ id }));
+    const ctx = makeCtx(text);
+    await makeCmd()(ctx);
+    expect(eventRepo.getEventById).toHaveBeenCalledWith(id, expect.anything());
+    expect(getReplyText(ctx)).toContain('https://events.playriftbound.com/en-US/events/117093196872746571');
   });
 
   it('/events <small number> still means days (no event lookup)', async () => {
@@ -874,5 +889,25 @@ describe('createEventActionHandler — event:list back-to-list fix', () => {
     const call = editMessageText.mock.calls[0] as [string, { reply_markup?: { inline_keyboard: { text: string }[][] } }];
     const texts = (call[1]?.reply_markup?.inline_keyboard ?? []).flat().map((b) => b.text);
     expect(texts).toContain('\u2190 Back to list');
+  });
+});
+
+
+describe('Riot listings without end timestamps', () => {
+  it('keeps recent events with unknown end time while dropping known ended events', async () => {
+    const eventRepo = mockEventRepo();
+    eventRepo.getEvents.mockResolvedValue([
+      baseListing({ id: 'riot:117093196872746571', startDatetime: '2026-10-17T08:00:00Z', endDatetime: null }),
+      baseListing({ id: 42, startDatetime: '2026-10-17T07:00:00Z', endDatetime: '2026-10-17T09:00:00Z' }),
+    ]);
+    const command = createEventsCommand({ eventRepository: eventRepo, eventListingRepository: eventRepo,
+      userSettingsRepository: mockUserSettingsRepo(), eventNavigationContext: navigationContext,
+      defaultLocation: { latitude: 37.39, longitude: -5.99, numMiles: 50 }, daysAhead: 7,
+      now: () => new Date('2026-10-17T10:00:00Z'),
+    });
+    const ctx = makeCtx('/events 7');
+    await command(ctx);
+    expect(navigationContext.getEventList(TEST_USER_ID)?.events.map((event) => event.id))
+      .toEqual(['riot:117093196872746571']);
   });
 });

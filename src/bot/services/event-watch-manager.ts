@@ -1,16 +1,19 @@
 import { EventDetail } from '../../core/entities/event-detail.js';
 import { EventWatch } from '../../core/entities/event-watch.js';
+import type { EventId } from '../../core/entities/event-id.js';
 import {
   EventWatchDraft,
   IEventWatchRepository,
 } from '../../core/ports/event-watch-repository.js';
 import { EventLocation, IEventRepository } from '../../core/ports/event-repository.js';
-import { pairingToResult } from './event-watcher-diff.js';
+import { findPairingForWatch, pairingToResult } from './event-watcher-diff.js';
 
 export interface WatchTarget {
-  readonly eventId: number;
+  readonly eventId: EventId;
   readonly eventName: string;
   readonly eventUsername: string;
+  readonly registrationId?: number | string;
+  readonly supportsTracking?: boolean;
 }
 
 export type WatchStatusKind = 'waiting' | 'paired' | 'degraded' | 'missing';
@@ -34,6 +37,7 @@ export type WatchSubscriptionResult =
   | { readonly kind: 'subscribed'; readonly watch: EventWatch; readonly replaced: boolean }
   | { readonly kind: 'already-watching'; readonly watch: EventWatch }
   | { readonly kind: 'needs-confirmation'; readonly current: EventWatch }
+  | { readonly kind: 'unsupported'; readonly reason: string }
   | { readonly kind: 'stale' };
 
 export type WatchStopResult =
@@ -83,20 +87,28 @@ function storedLiveState(watch: EventWatch): WatchLiveState {
   };
 }
 
-function liveStateFromDetail(data: EventDetail, username: string): WatchLiveState {
-  const pairing = data.pairings.find(
-    (candidate) => candidate.player1 === username || candidate.player2 === username,
-  );
+function liveStateFromDetail(
+  data: EventDetail,
+  username: string,
+  registrationId?: number | string,
+): WatchLiveState {
+  const pairing = findPairingForWatch(data.pairings, {
+    eventUsername: username,
+    ...(registrationId === undefined ? {} : { registrationId }),
+  });
   const round = data.currentRound?.roundNumber ?? null;
   if (!pairing) {
     return { round, table: null, opponent: null, result: null };
   }
-  const opponent = pairing.player1 === username ? pairing.player2 : pairing.player1;
+  const watchedPlayerIsFirst = registrationId !== undefined
+    ? pairing.player1Id === String(registrationId)
+    : pairing.player1 === username;
+  const opponent = watchedPlayerIsFirst ? pairing.player2 : pairing.player1;
   return {
     round,
     table: pairing.tableNumber,
     opponent: opponent || 'Bye',
-    result: pairingToResult(pairing, username),
+    result: pairingToResult(pairing, username, registrationId),
   };
 }
 
@@ -116,6 +128,7 @@ function draftFor(userId: number, target: WatchTarget): EventWatchDraft {
     eventId: target.eventId,
     eventName: target.eventName,
     eventUsername: target.eventUsername,
+    ...(target.registrationId === undefined ? {} : { registrationId: target.registrationId }),
     createdAt: new Date().toISOString(),
   };
 }
@@ -145,7 +158,7 @@ export function createEventWatchManager(deps: EventWatchManagerDeps): IEventWatc
         if (!detail) {
           return { ...status, kind: 'missing', refreshed: true, refreshError: true };
         }
-        const live = liveStateFromDetail(detail, watch.eventUsername);
+        const live = liveStateFromDetail(detail, watch.eventUsername, watch.registrationId);
         return {
           ...status,
           kind: refreshedStatusKind(watch, live),
@@ -158,11 +171,25 @@ export function createEventWatchManager(deps: EventWatchManagerDeps): IEventWatc
     },
 
     async requestSubscription(userId, target): Promise<WatchSubscriptionResult> {
+      if (target.supportsTracking === false) {
+        return {
+          kind: 'unsupported',
+          reason: 'Player watches support 1v1 events only.',
+        };
+      }
+
+      const samePlayer = (watch: EventWatch): boolean => {
+        if (watch.registrationId !== undefined && target.registrationId !== undefined) {
+          return String(watch.registrationId) === String(target.registrationId);
+        }
+        return watch.eventUsername === target.eventUsername;
+      };
+
       const current = await deps.watchRepository.get(userId);
       if (current) {
         if (
           current.eventId === target.eventId &&
-          current.eventUsername === target.eventUsername
+          samePlayer(current)
         ) {
           return { kind: 'already-watching', watch: current };
         }
@@ -173,7 +200,7 @@ export function createEventWatchManager(deps: EventWatchManagerDeps): IEventWatc
       if (!created) {
         const raced = await deps.watchRepository.get(userId);
         if (!raced) return { kind: 'stale' };
-        if (raced.eventId === target.eventId && raced.eventUsername === target.eventUsername) {
+        if (raced.eventId === target.eventId && samePlayer(raced)) {
           return { kind: 'already-watching', watch: raced };
         }
         return { kind: 'needs-confirmation', current: raced };

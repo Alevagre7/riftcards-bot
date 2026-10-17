@@ -1,5 +1,6 @@
 import { Context } from 'telegraf';
 import type { InlineKeyboardButton } from '@telegraf/types/markup.js';
+import type { EventId, RoundId } from '../../core/entities/event-id.js';
 import { IEventRepository, EventLocation } from '../../core/ports/event-repository.js';
 import { IEventListingRepository } from '../../core/ports/event-listing-repository.js';
 import { IUserSettingsRepository } from '../../core/ports/user-settings-repository.js';
@@ -20,6 +21,7 @@ import { formatEventRounds } from '../formatters/event-rounds-formatter.js';
 import type { IEventNavigationContext } from '../state/event-navigation-context.js';
 import { escapeHtml } from '../formatters/card-formatter.js';
 import { formatEventWatchStatus, formatNoEventWatch } from '../formatters/event-watch-formatter.js';
+import { encodeEventId, encodeRoundId, decodeEventId, decodeWatchCallback, watchSelectionCallback, watchReplacementCallback } from '../utils/event-callback-codec.js';
 
 interface EventActionDeps {
   eventRepository: IEventRepository;
@@ -36,9 +38,23 @@ export function createEventActionHandler(deps: EventActionDeps) {
   return async (ctx: Context) => {
     const data =
       ctx.callbackQuery && 'data' in ctx.callbackQuery ? ctx.callbackQuery.data : undefined;
-    if (!data || (!data.startsWith('event:') && !data.startsWith('admin:') && !data.startsWith('watch:'))) return;
+    if (!data || (!data.startsWith('event:') && !data.startsWith('admin:') && !data.startsWith('watch:') && !data.startsWith('wps:') && !data.startsWith('wpr:'))) return;
 
     await ctx.answerCbQuery();
+
+    if (data.startsWith('wps:') || data.startsWith('wpr:')) {
+      const decoded = decodeWatchCallback(data);
+      if (!decoded) {
+        await ctx.reply('That button is invalid. Open the event again.');
+        return;
+      }
+      if (decoded.revision !== undefined) {
+        await handleWatchReplace(ctx, deps, decoded.eventId, decoded.registrationId, decoded.revision);
+      } else {
+        await handleWatchSelect(ctx, deps, decoded.eventId, decoded.registrationId);
+      }
+      return;
+    }
 
     // No-op: page label click — silent ack
     if (data === 'event:noop') return;
@@ -104,9 +120,9 @@ export function createEventActionHandler(deps: EventActionDeps) {
 
     // Event opened from an actual list row. The navigation context clears
     // only this Event's direct marker and preserves the list context.
-    const listEventMatch = /^event:list:(\d+)$/.exec(data);
+    const listEventMatch = /^event:list:([0-9]+|r[0-9a-z]+)$/.exec(data);
     if (listEventMatch) {
-      const eventId = parseInt(listEventMatch[1]!, 10);
+      const eventId = decodeEventId(listEventMatch[1]!);
       const userId = ctx.from?.id;
       deps.eventNavigationContext.openEventFromList(userId, eventId);
       await renderEventDetail(ctx, deps, eventId);
@@ -114,77 +130,77 @@ export function createEventActionHandler(deps: EventActionDeps) {
     }
 
     // Leaderboard view (current round)
-    const leaderboardMatch = /^event:(\d+):leaderboard$/.exec(data);
+    const leaderboardMatch = /^event:([0-9]+|r[0-9a-z]+):leaderboard$/.exec(data);
     if (leaderboardMatch) {
-      await handleLeaderboard(ctx, deps, parseInt(leaderboardMatch[1]!, 10));
+      await handleLeaderboard(ctx, deps, decodeEventId(leaderboardMatch[1]!));
       return;
     }
 
     // Leaderboard for a specific round (←/→ round nav)
-    const leaderboardRoundMatch = /^event:(\d+):leaderboard:round:(\d+)$/.exec(data);
+    const leaderboardRoundMatch = /^event:([0-9]+|r[0-9a-z]+):leaderboard:round:(\d+|q[A-Za-z0-9_-]{16})$/.exec(data);
     if (leaderboardRoundMatch) {
       await handleLeaderboard(
         ctx,
         deps,
-        parseInt(leaderboardRoundMatch[1]!, 10),
-        parseInt(leaderboardRoundMatch[2]!, 10),
+        decodeEventId(leaderboardRoundMatch[1]!),
+        leaderboardRoundMatch[2]!.startsWith('q') ? leaderboardRoundMatch[2]! : parseInt(leaderboardRoundMatch[2]!, 10),
       );
       return;
     }
 
     // All tables / rounds view (current round)
-    const roundsMatch = /^event:(\d+):rounds$/.exec(data);
+    const roundsMatch = /^event:([0-9]+|r[0-9a-z]+):rounds$/.exec(data);
     if (roundsMatch) {
-      await handleRounds(ctx, deps, parseInt(roundsMatch[1]!, 10));
+      await handleRounds(ctx, deps, decodeEventId(roundsMatch[1]!));
       return;
     }
 
     // All tables for a specific round (←/→ round nav)
-    const roundsRoundMatch = /^event:(\d+):rounds:round:(\d+)$/.exec(data);
+    const roundsRoundMatch = /^event:([0-9]+|r[0-9a-z]+):rounds:round:(\d+|q[A-Za-z0-9_-]{16})$/.exec(data);
     if (roundsRoundMatch) {
       await handleRounds(
         ctx,
         deps,
-        parseInt(roundsRoundMatch[1]!, 10),
-        parseInt(roundsRoundMatch[2]!, 10),
+        decodeEventId(roundsRoundMatch[1]!),
+        roundsRoundMatch[2]!.startsWith('q') ? roundsRoundMatch[2]! : parseInt(roundsRoundMatch[2]!, 10),
       );
       return;
     }
     // Watch: start picker
-    const watchStartMatch = /^event:(\d+):watch:start$/.exec(data);
+    const watchStartMatch = /^event:([0-9]+|r[0-9a-z]+):watch:start$/.exec(data);
     if (watchStartMatch) {
-      await handleWatchStart(ctx, deps, parseInt(watchStartMatch[1]!, 10));
+      await handleWatchStart(ctx, deps, decodeEventId(watchStartMatch[1]!));
       return;
     }
 
     // Watch: roster page navigation
-    const watchPageMatch = /^event:(\d+):watch:page:(-?\d+)$/.exec(data);
+    const watchPageMatch = /^event:([0-9]+|r[0-9a-z]+):watch:page:(-?\d+)$/.exec(data);
     if (watchPageMatch) {
       await handleWatchPage(
         ctx,
         deps,
-        parseInt(watchPageMatch[1]!, 10),
+        decodeEventId(watchPageMatch[1]!),
         parseInt(watchPageMatch[2]!, 10),
       );
       return;
     }
 
     // Watch: select player by stable registration id
-    const watchSelectMatch = /^event:(\d+):watch:select:(\d+)$/.exec(data);
+    const watchSelectMatch = /^event:([0-9]+|r[0-9a-z]+):watch:select:(\d+)$/.exec(data);
     if (watchSelectMatch) {
       await handleWatchSelect(
         ctx,
         deps,
-        parseInt(watchSelectMatch[1]!, 10),
+        decodeEventId(watchSelectMatch[1]!),
         parseInt(watchSelectMatch[2]!, 10),
       );
       return;
     }
 
     // Single event detail
-    const match = /^event:(\d+)$/.exec(data);
+    const match = /^event:([0-9]+|r[0-9a-z]+)$/.exec(data);
     if (match) {
-      const id = parseInt(match[1]!, 10);
+      const id = decodeEventId(match[1]!);
       await renderEventDetail(ctx, deps, id);
       return;
     }
@@ -202,8 +218,8 @@ export function createEventActionHandler(deps: EventActionDeps) {
 // Hoisted so the handlers below can reference it.
 function composeRoundViewKeyboard(
   allRounds: readonly EventRoundSummary[],
-  displayedRoundId: number | null,
-  eventId: number,
+  displayedRoundId: RoundId | null,
+  eventId: EventId,
   kind: 'leaderboard' | 'rounds',
 ): InlineKeyboardButton[][] {
   const keyboard: InlineKeyboardButton[][] = [];
@@ -211,7 +227,7 @@ function composeRoundViewKeyboard(
     const nav = buildRoundNavRow(allRounds, displayedRoundId, eventId, kind);
     if (nav.length > 0) keyboard.push(nav);
   }
-  keyboard.push([{ text: '\u2190 Back to event', callback_data: `event:${eventId}` }]);
+  keyboard.push([{ text: '\u2190 Back to event', callback_data: `event:${encodeEventId(eventId)}` }]);
   return keyboard;
 }
 
@@ -225,8 +241,8 @@ function orderRounds(
 
 function buildRoundNavRow(
   allRounds: readonly EventRoundSummary[],
-  currentRoundId: number,
-  eventId: number,
+  currentRoundId: RoundId,
+  eventId: EventId,
   kind: 'leaderboard' | 'rounds',
 ): InlineKeyboardButton[] {
   const idx = allRounds.findIndex((r) => r.id === currentRoundId);
@@ -236,14 +252,14 @@ function buildRoundNavRow(
     const prev = allRounds[idx - 1]!;
     row.push({
       text: `\u2190 Round ${prev.roundNumber}`,
-      callback_data: `event:${eventId}:${kind}:round:${prev.id}`,
+      callback_data: `event:${encodeEventId(eventId)}:${kind}:round:${encodeRoundId(prev.id)}`,
     });
   }
   if (idx < allRounds.length - 1) {
     const next = allRounds[idx + 1]!;
     row.push({
       text: `Round ${next.roundNumber} \u2192`,
-      callback_data: `event:${eventId}:${kind}:round:${next.id}`,
+      callback_data: `event:${encodeEventId(eventId)}:${kind}:round:${encodeRoundId(next.id)}`,
     });
   }
   return row;
@@ -256,8 +272,8 @@ function buildRoundNavRow(
 async function handleLeaderboard(
   ctx: Context,
   deps: EventActionDeps,
-  eventId: number,
-  roundId?: number,
+  eventId: EventId,
+  roundId?: number | string,
 ): Promise<void> {
   const location = await resolveEventLocation(ctx.from?.id, deps);
   const data = await deps.eventRepository.getEventDetail(eventId, location);
@@ -266,11 +282,12 @@ async function handleLeaderboard(
     return;
   }
   const allRounds = orderRounds(data.event.tournamentPhases);
-  let displayedRoundId: number | null = null;
+  let displayedRoundId: RoundId | null = null;
   let displayedRoundNumber: number | null = null;
   let standings: readonly EventStanding[] = [];
   if (roundId != null) {
-    const round = allRounds.find((r) => r.id === roundId);
+    const matches = allRounds.filter((r) => encodeRoundId(r.id) === String(roundId));
+    const round = matches.length === 1 ? matches[0] : undefined;
     if (!round) {
       await ctx.reply('Round not found.');
       return;
@@ -290,7 +307,7 @@ async function handleLeaderboard(
     let found = false;
     for (let i = startIdx; i < sorted.length; i++) {
       const round = sorted[i]!;
-      const rows = round.id === data.currentRound?.id
+      const rows = round.id === (data.standingsRoundId ?? data.currentRound?.id)
         ? data.standings
         : await deps.eventRepository.getEventStandings(round.id);
       if (rows.length > 0) {
@@ -328,8 +345,8 @@ async function handleLeaderboard(
 async function handleRounds(
   ctx: Context,
   deps: EventActionDeps,
-  eventId: number,
-  roundId?: number,
+  eventId: EventId,
+  roundId?: number | string,
 ): Promise<void> {
   const location = await resolveEventLocation(ctx.from?.id, deps);
   const data = await deps.eventRepository.getEventDetail(eventId, location);
@@ -339,11 +356,12 @@ async function handleRounds(
   }
   const allRounds = orderRounds(data.event.tournamentPhases);
   let displayedRound: EventRoundSummary | null;
-  let displayedRoundId: number | null;
+  let displayedRoundId: RoundId | null;
   let displayedRoundNumber: number | null;
   let pairings: readonly EventPairing[];
   if (roundId != null) {
-    const round = allRounds.find((r) => r.id === roundId);
+    const matches = allRounds.filter((r) => encodeRoundId(r.id) === String(roundId));
+    const round = matches.length === 1 ? matches[0] : undefined;
     if (!round) {
       await ctx.reply('Round not found.');
       return;
@@ -381,7 +399,7 @@ const NAMES_PER_PAGE = 8;
 async function handleWatchStart(
   ctx: Context,
   deps: EventActionDeps,
-  eventId: number,
+  eventId: EventId,
 ): Promise<void> {
   if (ctx.chat?.type !== 'private') {
     await ctx.reply('Watch management is available in a private chat with me.');
@@ -394,6 +412,10 @@ async function handleWatchStart(
     return;
   }
 
+  if (data.event.supportsTracking === false) {
+    await ctx.reply('Player tracking is currently available for 1v1 events only.');
+    return;
+  }
   await sendRosterPage(
     ctx,
     data.event.id,
@@ -405,7 +427,7 @@ async function handleWatchStart(
 async function handleWatchPage(
   ctx: Context,
   deps: EventActionDeps,
-  eventId: number,
+  eventId: EventId,
   page: number,
 ): Promise<void> {
   if (ctx.chat?.type !== 'private') {
@@ -418,6 +440,10 @@ async function handleWatchPage(
     await ctx.reply('Roster changed, please try again.');
     return;
   }
+  if (data.event.supportsTracking === false) {
+    await ctx.reply('Player tracking is currently available for 1v1 events only.');
+    return;
+  }
   await sendRosterPage(
     ctx,
     data.event.id,
@@ -428,13 +454,13 @@ async function handleWatchPage(
 
 async function sendRosterPage(
   ctx: Context,
-  eventId: number,
+  eventId: EventId,
   roster: readonly EventRegistration[],
   page: number,
 ): Promise<void> {
   const buttons: InlineKeyboardButton[][] = [];
   if (roster.length === 0) {
-    buttons.push([{ text: '\u2190 Back to event', callback_data: `event:${eventId}` }]);
+    buttons.push([{ text: '\u2190 Back to event', callback_data: `event:${encodeEventId(eventId)}` }]);
     await ctx.editMessageText('No active players available to watch yet.', {
       reply_markup: { inline_keyboard: buttons },
     });
@@ -455,7 +481,7 @@ async function sendRosterPage(
     buttons.push([
       {
         text: `${entry.name} (${entry.status})`,
-        callback_data: `event:${eventId}:watch:select:${entry.id}`,
+        callback_data: watchSelectionCallback(eventId, entry.id),
       },
     ]);
   }
@@ -464,12 +490,12 @@ async function sendRosterPage(
     buttons.push([
       {
         text: 'Next \u203A',
-        callback_data: `event:${eventId}:watch:page:${page + 1}`,
+        callback_data: `event:${encodeEventId(eventId)}:watch:page:${page + 1}`,
       },
     ]);
   }
 
-  buttons.push([{ text: '\u2190 Back to event', callback_data: `event:${eventId}` }]);
+  buttons.push([{ text: '\u2190 Back to event', callback_data: `event:${encodeEventId(eventId)}` }]);
 
   await ctx.editMessageText(lines.join('\n'), {
     reply_markup: { inline_keyboard: buttons },
@@ -483,8 +509,8 @@ async function sendRosterPage(
 async function handleWatchSelect(
   ctx: Context,
   deps: EventActionDeps,
-  eventId: number,
-  registrationId: number,
+  eventId: EventId,
+  registrationId: number | string,
 ): Promise<void> {
   if (ctx.chat?.type !== 'private') {
     await ctx.reply('Watch management is available in a private chat with me.');
@@ -504,6 +530,10 @@ async function handleWatchSelect(
   }
 
   const rosterEntry = data.registrations.find((entry) => entry.id === registrationId);
+  if (data.event.supportsTracking === false) {
+    await ctx.reply('Player watches support 1v1 events only.');
+    return;
+  }
   if (!rosterEntry || rosterEntry.status !== 'Active') {
     await ctx.reply('Roster changed, please try again.');
     return;
@@ -511,8 +541,10 @@ async function handleWatchSelect(
 
   const result = await deps.watchManager.requestSubscription(userId, {
     eventId,
+    supportsTracking: true,
     eventName: data.event.name,
     eventUsername: rosterEntry.name,
+    ...(typeof eventId === 'string' ? { registrationId: rosterEntry.id } : {}),
   });
   await renderWatchSelectionResult(ctx, result, data.event.name, rosterEntry.name, eventId, registrationId);
 }
@@ -520,8 +552,8 @@ async function handleWatchSelect(
 async function handleWatchReplace(
   ctx: Context,
   deps: EventActionDeps,
-  eventId: number,
-  registrationId: number,
+  eventId: EventId,
+  registrationId: number | string,
   expectedRevision: string,
 ): Promise<void> {
   if (ctx.chat?.type !== 'private') {
@@ -536,13 +568,18 @@ async function handleWatchReplace(
   const location = await resolveEventLocation(userId, deps);
   const data = await deps.eventRepository.getEventDetail(eventId, location);
   const rosterEntry = data?.registrations.find((entry) => entry.id === registrationId);
+  if (data?.event.supportsTracking === false) {
+    await ctx.reply('Player watches support 1v1 events only.');
+    return;
+  }
   if (!data || !rosterEntry || rosterEntry.status !== 'Active') {
     await ctx.reply('Roster changed, please try again.');
     return;
   }
   const result = await deps.watchManager.replaceSubscription(
     userId,
-    { eventId, eventName: data.event.name, eventUsername: rosterEntry.name },
+    { eventId, supportsTracking: true, eventName: data.event.name, eventUsername: rosterEntry.name,
+      ...(typeof eventId === 'string' ? { registrationId: rosterEntry.id } : {}) },
     expectedRevision,
   );
   if (result.kind === 'stale') {
@@ -558,9 +595,13 @@ async function renderWatchSelectionResult(
   result: WatchSubscriptionResult,
   eventName: string,
   username: string,
-  eventId: number,
-  registrationId: number,
+  eventId: EventId,
+  registrationId: number | string,
 ): Promise<void> {
+  if (result.kind === 'unsupported') {
+    await ctx.reply(result.reason);
+    return;
+  }
   if (result.kind === 'already-watching') {
     await editWatchMessage(
       ctx,
@@ -577,7 +618,7 @@ async function renderWatchSelectionResult(
       ctx,
       `You are currently watching <b>${escapeHtml(result.current.eventUsername)}</b> at <b>${escapeHtml(result.current.eventName)}</b>. Replace it with <b>${escapeHtml(username)}</b> at <b>${escapeHtml(eventName)}</b>?`,
       [
-        [{ text: 'Replace watch', callback_data: `watch:replace:${eventId}:${registrationId}:${result.current.revision}` }],
+        [{ text: 'Replace watch', callback_data: watchReplacementCallback(eventId, registrationId, result.current.revision) }],
         [{ text: 'Keep current', callback_data: 'watch:show' }],
       ],
     );

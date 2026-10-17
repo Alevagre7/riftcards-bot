@@ -2,6 +2,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NexusTableAdapter } from './nexus-table.adapter.js';
 import { ApiTimeoutError, ApiResponseError } from '../../core/errors/index.js';
 
+const testStore = {
+  organizerId: 'b6e5c1f0-2233-4a55-8666-123456789abc',
+  name: 'Card Castle',
+  latitude: 37.39,
+  longitude: -5.99,
+  timezone: 'Europe/Madrid',
+};
+
 describe('NexusTableAdapter.getTable', () => {
   let adapter: NexusTableAdapter;
   let fetchSpy: ReturnType<typeof vi.fn>;
@@ -39,7 +47,7 @@ describe('NexusTableAdapter.getTable', () => {
       new Response(JSON.stringify(mockResponsePayload), { status: 200 }),
     );
 
-    await adapter.getTable({ username: 'TestUser' });
+    await adapter.getTable({ username: 'TestUser', store: testStore });
 
     const url = fetchSpy.mock.calls[0]![0] as string;
     const parsed = new URL(url);
@@ -60,7 +68,7 @@ describe('NexusTableAdapter.getTable', () => {
       new Response(JSON.stringify(mockResponsePayload), { status: 200 }),
     );
 
-    await adapter.getTable({ username: 'TestUser' });
+    await adapter.getTable({ username: 'TestUser', store: testStore });
 
     const options = fetchSpy.mock.calls[0]![1] as Record<string, unknown>;
     const headers = options['headers'] as Record<string, string>;
@@ -72,7 +80,7 @@ describe('NexusTableAdapter.getTable', () => {
       new Response(JSON.stringify(mockResponsePayload), { status: 200 }),
     );
 
-    await adapter.getTable({ username: 'TestUser' });
+    await adapter.getTable({ username: 'TestUser', store: testStore });
 
     const options = fetchSpy.mock.calls[0]![1] as Record<string, unknown>;
     const headers = options['headers'] as Record<string, string>;
@@ -84,7 +92,7 @@ describe('NexusTableAdapter.getTable', () => {
       new Response(JSON.stringify(mockResponsePayload), { status: 200 }),
     );
 
-    const table = await adapter.getTable({ username: 'TestUser' });
+    const table = await adapter.getTable({ username: 'TestUser', store: testStore });
 
     expect(table.username).toBe('TestUser');
     expect(table.event).not.toBeNull();
@@ -135,7 +143,7 @@ describe('NexusTableAdapter.getTable', () => {
       ),
     );
 
-    const table = await adapter.getTable({ username: 'NoEventUser' });
+    const table = await adapter.getTable({ username: 'NoEventUser', store: testStore });
 
     expect(table.event).toBeNull();
     expect(table.round).toBeNull();
@@ -155,7 +163,7 @@ describe('NexusTableAdapter.getTable', () => {
       }),
     );
 
-    await expect(adapter.getTable({ username: 'Unknown' })).rejects.toThrow(
+    await expect(adapter.getTable({ username: 'Unknown', store: testStore })).rejects.toThrow(
       'Nexus Table API returned status 404',
     );
   });
@@ -165,7 +173,7 @@ describe('NexusTableAdapter.getTable', () => {
       new Response('Internal Server Error', { status: 503 }),
     );
 
-    await expect(adapter.getTable({ username: 'Test' })).rejects.toThrow(
+    await expect(adapter.getTable({ username: 'Test', store: testStore })).rejects.toThrow(
       'Nexus Table API returned status 503',
     );
   });
@@ -173,7 +181,7 @@ describe('NexusTableAdapter.getTable', () => {
   it('throws ApiResponseError when the upstream returns invalid JSON', async () => {
     fetchSpy.mockResolvedValue(new Response('<html>not json</html>', { status: 200 }));
 
-    await expect(adapter.getTable({ username: 'Test' })).rejects.toThrow(
+    await expect(adapter.getTable({ username: 'Test', store: testStore })).rejects.toThrow(
       'Nexus Table API returned status 502',
     );
   });
@@ -181,7 +189,7 @@ describe('NexusTableAdapter.getTable', () => {
   it('throws ApiTimeoutError on network failure', async () => {
     fetchSpy.mockRejectedValue(new Error('AbortError'));
 
-    await expect(adapter.getTable({ username: 'Test' })).rejects.toThrow(
+    await expect(adapter.getTable({ username: 'Test', store: testStore })).rejects.toThrow(
       ApiTimeoutError,
     );
   });
@@ -214,7 +222,7 @@ describe('NexusTableAdapter with token', () => {
       ),
     );
 
-    await adapter.getTable({ username: 'TestUser' });
+    await adapter.getTable({ username: 'TestUser', store: testStore });
 
     const options = fetchSpy.mock.calls[0]![1] as Record<string, unknown>;
     const headers = options['headers'] as Record<string, string>;

@@ -4,15 +4,21 @@
 // diffs against on each tick. When the snapshot is null the user has
 // never been paired (or the watch was just created / reset).
 
+import type { EventId, RoundId } from './event-id.js';
+
 export interface EventWatch {
   readonly telegramId: number;
   /** Unique incarnation of this user's active watch. */
   readonly revision: string;
-  readonly eventId: number;
+  readonly eventId: EventId;
   readonly eventName: string;
   readonly eventUsername: string;
+  /** Stable registration identity; absent on legacy name-only watches. */
+  readonly registrationId?: number | string;
   readonly hasObservedPairing: boolean;
   readonly lastSeenRound: number | null;
+  /** Stable round identity, when supplied by the event provider. */
+  readonly lastSeenRoundId?: RoundId | null;
   readonly lastSeenTable: number | null;
   readonly lastSeenOpponent: string | null;
   readonly lastSeenResult: 'win' | 'loss' | 'draw' | 'bye' | null;

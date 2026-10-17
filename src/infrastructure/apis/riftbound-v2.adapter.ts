@@ -1,11 +1,12 @@
-// RiftboundV2Adapter — the single upstream adapter for the events
-// subsystem, talking to the official Riftbound V2 API
+// RiftboundV2Adapter — legacy event reads for existing UVS references,
+// talking to the official Riftbound V2 API
 // (https://api.riftbound.uvsgames.com/api/v2, public, no auth).
 //
 // Implements IEventRepository (detail / registrations / live data) and
 // IEventListingRepository (listings). All responses are Zod-validated.
 
 import { z } from 'zod';
+import type { EventId, RoundId } from '../../core/entities/event-id.js';
 import { EventLocation, IEventRepository } from '../../core/ports/event-repository.js';
 import { IEventListingRepository } from '../../core/ports/event-listing-repository.js';
 import { EventListing, normalizeEventMode } from '../../core/entities/event-listing.js';
@@ -362,7 +363,7 @@ function mapV2StandingToLeaderboardEntry(
 
 function deriveCurrentRound(event: Event): EventRoundSummary | null {
   const rounds: EventRoundSummary[] = [];
-  const phaseOrder = new Map<number, number>();
+  const phaseOrder = new Map<RoundId, number>();
   for (const phase of event.tournamentPhases) {
     for (const round of phase.rounds) {
       phaseOrder.set(round.id, phase.orderInPhases);
@@ -406,7 +407,7 @@ export class RiftboundV2Adapter implements IEventRepository, IEventListingReposi
   private readonly baseUrl: string;
   private readonly timeoutMs: number;
   private readonly retryAttempts: number;
-  private readonly cache: Map<number, CacheEntry>;
+  private readonly cache: Map<EventId, CacheEntry>;
 
   constructor(options: RiftboundV2AdapterOptions) {
     this.baseUrl = options.baseUrl.replace(/\/+$/, '');
@@ -503,7 +504,8 @@ export class RiftboundV2Adapter implements IEventRepository, IEventListingReposi
       .map(mapV2EventToEventListing);
   }
 
-  async getEventById(id: number, _location: EventLocation): Promise<Event | null> {
+  async getEventById(id: EventId, _location: EventLocation): Promise<Event | null> {
+    if (typeof id !== 'number') throw new ApiResponseError('Riftbound V2', 400, 'Wrong event provider');
     const { status, json } = await this.request(`/events/${id}/`, new URLSearchParams());
     if (status === 404) return null;
     if (status !== 200) throw new ApiResponseError('Riftbound V2', status);
@@ -513,9 +515,10 @@ export class RiftboundV2Adapter implements IEventRepository, IEventListingReposi
   }
 
   async getEventRegistrations(
-    id: number,
+    id: EventId,
     _location: EventLocation,
   ): Promise<EventRegistration[]> {
+    if (typeof id !== 'number') throw new ApiResponseError('Riftbound V2', 400, 'Wrong event provider');
     const params = new URLSearchParams();
     params.set('page_size', '100');
     const results = await this.fetchPaginated(
@@ -527,7 +530,7 @@ export class RiftboundV2Adapter implements IEventRepository, IEventListingReposi
   }
 
   async getEventDetail(
-    id: number,
+    id: EventId,
     location: EventLocation,
     options?: { fresh?: boolean },
   ): Promise<EventDetail | null> {
@@ -580,7 +583,8 @@ export class RiftboundV2Adapter implements IEventRepository, IEventListingReposi
     return detail;
   }
 
-  async getEventMatches(roundId: number): Promise<EventPairing[]> {
+  async getEventMatches(roundId: RoundId): Promise<EventPairing[]> {
+    if (typeof roundId !== 'number') throw new ApiResponseError('Riftbound V2', 400, 'Wrong round provider');
     const matches = await this.fetchPaginated(
       `/tournament-rounds/${roundId}/matches/paginated/`,
       new URLSearchParams({ page_size: '10', avoid_cache: 'true' }),
@@ -589,7 +593,8 @@ export class RiftboundV2Adapter implements IEventRepository, IEventListingReposi
     return matches.map(mapV2MatchToPairing);
   }
 
-  async getEventStandings(roundId: number): Promise<EventStanding[]> {
+  async getEventStandings(roundId: RoundId): Promise<EventStanding[]> {
+    if (typeof roundId !== 'number') throw new ApiResponseError('Riftbound V2', 400, 'Wrong round provider');
     const rows = await this.fetchPaginated(
       `/tournament-rounds/${roundId}/standings/paginated/`,
       new URLSearchParams({ page_size: '10' }),

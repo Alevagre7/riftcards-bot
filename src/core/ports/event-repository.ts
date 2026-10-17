@@ -1,4 +1,5 @@
 import { Event } from '../entities/event.js';
+import { EventId, RoundId } from '../entities/event-id.js';
 import { EventRegistration } from '../entities/event-registration.js';
 import { EventDetail, EventPairing, EventStanding } from '../entities/event-detail.js';
 
@@ -17,13 +18,13 @@ export interface EventLocation {
 
 export interface IEventRepository {
   getEventById(
-    id: number,
+    id: EventId,
     location: EventLocation,
   ): Promise<Event | null>;
 
 
   getEventRegistrations(
-    id: number,
+    id: EventId,
     location: EventLocation,
   ): Promise<EventRegistration[]>;
 
@@ -31,12 +32,12 @@ export interface IEventRepository {
    *  all-tables handler to render a non-current round when the user
    *  navigates with the ←/→ round buttons. Returns an empty array
    *  when the round has no pairings (e.g. UPCOMING). */
-  getEventMatches(roundId: number): Promise<EventPairing[]>;
+  getEventMatches(roundId: RoundId): Promise<EventPairing[]>;
 
   /** Fetch the standings for a specific round. Used by the leaderboard
    *  handler to render standings for a past round. Returns an empty
    *  array when the round has no standings yet. */
-  getEventStandings(roundId: number): Promise<EventStanding[]>;
+  getEventStandings(roundId: RoundId): Promise<EventStanding[]>;
 
   /** Fetch the live detail bundle
    *  round's pairings/standings). Returns null if the event doesn't
@@ -48,7 +49,7 @@ export interface IEventRepository {
    *  moment the upstream publishes them rather than reading a detail
    *  that was captured up to CACHE_TTL_MS earlier. */
   getEventDetail(
-    id: number,
+    id: EventId,
     location: EventLocation,
     options?: { fresh?: boolean },
   ): Promise<EventDetail | null>;

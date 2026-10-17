@@ -197,6 +197,21 @@ describe('createEventNavigationContext', () => {
     expect(navigation.shouldShowBackToList(456, LISTING_A.id)).toBe(true);
   });
 
+  it('keeps numeric and Riot provider IDs as separate navigation keys', () => {
+    const navigation = createEventNavigationContext(() => 1_000_000);
+    const riotEvent: EventListing = { ...LISTING_A, id: 'riot:735205' };
+
+    navigation.openEventDirectly(123, LISTING_A.id);
+    navigation.openEventDirectly(123, riotEvent.id);
+    navigation.rememberEventList(123, [LISTING_A, riotEvent], 7);
+
+    expect(navigation.shouldShowBackToList(123, LISTING_A.id)).toBe(false);
+    expect(navigation.shouldShowBackToList(123, riotEvent.id)).toBe(false);
+    navigation.openEventFromList(123, riotEvent.id);
+    expect(navigation.shouldShowBackToList(123, riotEvent.id)).toBe(true);
+    expect(navigation.shouldShowBackToList(123, LISTING_A.id)).toBe(false);
+  });
+
   it('keeps direct-origin state independent when a list is remembered', () => {
     const navigation = createEventNavigationContext(() => 1_000_000);
 

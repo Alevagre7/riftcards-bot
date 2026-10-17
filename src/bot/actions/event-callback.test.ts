@@ -1,3 +1,4 @@
+import { encodeEventId, encodeRoundId, watchSelectionCallback, decodeWatchCallback } from '../utils/event-callback-codec.js';
 import { describe, expect, it, vi } from 'vitest';
 import { Context } from 'telegraf';
 import { createEventActionHandler } from './event-callback.js';
@@ -88,6 +89,9 @@ function makeHandler(
     getNexusUsername: vi.fn(),
     setNexusUsername: vi.fn(),
     clearNexusUsername: vi.fn(),
+    getMytableStore: vi.fn().mockResolvedValue(null),
+    setMytableStore: vi.fn(),
+    clearMytableStore: vi.fn(),
   };
   const handler = createEventActionHandler({
     eventRepository,
@@ -172,5 +176,80 @@ describe('event watch callbacks', () => {
     expect(watch.requestSubscription).not.toHaveBeenCalled();
     expect(ctx.answerCbQuery).toHaveBeenCalledTimes(1);
     expect(ctx.reply).toHaveBeenCalledWith('Roster changed, please try again.');
+  });
+});
+
+
+describe('Riot event navigation and player selection', () => {
+  const eventId = 'riot:117093196872746571' as const;
+  const playerId = '01234567-89ab-cdef-0123-456789abcdef';
+  function riotDetail(): EventDetail {
+    return { ...detail(), event: { ...event, id: eventId }, registrations: [
+      { ...registrations[0]!, id: playerId, name: 'Same name' },
+      { ...registrations[1]!, id: '11234567-89ab-cdef-0123-456789abcdef', name: 'Same name' },
+    ] };
+  }
+
+  it('renders compact roster buttons and subscribes using the selected player UUID', async () => {
+    const watch = watchManager();
+    const { handler } = makeHandler(riotDetail(), watch);
+    const ctx = makeContext(`event:${encodeEventId(eventId)}:watch:start`);
+    await handler(ctx);
+    const buttons = (ctx.editMessageText as ReturnType<typeof vi.fn>).mock.calls[0]![1].reply_markup.inline_keyboard;
+    const data = buttons[0][0].callback_data;
+    expect(Buffer.byteLength(data)).toBeLessThanOrEqual(64);
+    expect(decodeWatchCallback(data)).toEqual({ eventId, registrationId: playerId });
+    await handler(makeContext(data));
+    expect(watch.requestSubscription).toHaveBeenCalledWith(7, {
+      eventId, supportsTracking: true, eventName: 'Test Event', eventUsername: 'Same name', registrationId: playerId,
+    });
+  });
+
+  it('keeps replace confirmation within 64 bytes even when the previous watch uses a legacy revision', async () => {
+    const watch = watchManager();
+    watch.requestSubscription.mockResolvedValue({ kind: 'needs-confirmation', current: {
+      eventId: 42, eventName: 'Previous', eventUsername: 'Other', revision: '0123456789abcdef0123456789abcdef',
+    } });
+    const { handler } = makeHandler(riotDetail(), watch);
+    const ctx = makeContext(watchSelectionCallback(eventId, playerId));
+    await handler(ctx);
+    const keyboard = (ctx.editMessageText as ReturnType<typeof vi.fn>).mock.calls[0]![1].reply_markup.inline_keyboard;
+    const replacement = keyboard[0][0].callback_data;
+    expect(Buffer.byteLength(replacement)).toBeLessThanOrEqual(64);
+    expect(decodeWatchCallback(replacement)).toEqual({ eventId, registrationId: playerId,
+      revision: '0123456789abcdef0123456789abcdef' });
+  });
+
+  it('resolves rounds by stable composite identity when two phases both have round one', async () => {
+    const first = 'riot:117093196872746571:stage-a:section-a:1';
+    const second = 'riot:117093196872746571:stage-b:section-b:1';
+    const row = (id: string) => ({ id, roundNumber: 1, status: 'COMPLETE', pairingsStatus: null, standingsStatus: null });
+    const value = riotDetail();
+    const data = { ...value, event: { ...value.event, tournamentPhases: [
+      { id: 'a', status: 'COMPLETE', orderInPhases: 0, phaseName: 'Swiss', rounds: [row(first)] },
+      { id: 'b', status: 'IN_PROGRESS', orderInPhases: 1, phaseName: 'Final', rounds: [row(second)] },
+    ] } };
+    const { handler, eventRepository } = makeHandler(data, watchManager());
+    (eventRepository.getEventMatches as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+    const ctx = makeContext(`event:${encodeEventId(eventId)}:rounds:round:${encodeRoundId(second)}`);
+    await handler(ctx);
+    expect(eventRepository.getEventMatches).toHaveBeenCalledWith(second);
+    const keyboard = (ctx.editMessageText as ReturnType<typeof vi.fn>).mock.calls[0]![1].reply_markup.inline_keyboard;
+    const previous = keyboard[0][0].callback_data;
+    expect(previous).toContain(encodeRoundId(first));
+    expect(Buffer.byteLength(previous)).toBeLessThanOrEqual(64);
+  });
+
+  it('does not allow player tracking in unsupported formats or group chats', async () => {
+    const watch = watchManager();
+    const data = riotDetail();
+    const { handler } = makeHandler({ ...data, event: { ...data.event, supportsTracking: false } }, watch);
+    const ctx = makeContext(watchSelectionCallback(eventId, playerId));
+    await handler(ctx);
+    expect(watch.requestSubscription).not.toHaveBeenCalled();
+    const group = makeContext(watchSelectionCallback(eventId, playerId));
+    Object.assign(group, { chat: { id: -10, type: 'group' } });
+    await handler(group);
+    expect(group.reply).toHaveBeenCalledWith('Watch management is available in a private chat with me.');
   });
 });

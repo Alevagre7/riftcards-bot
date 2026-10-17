@@ -42,6 +42,27 @@ const registrations: EventRegistration[] = [
   { id: 2, name: 'Bob', status: 'Dropped', profileImageUrl: null, matchesWon: 0, matchesLost: 0, matchesDrawn: 0, isGuest: false, finalPlaceInStandings: null },
 ];
 
+describe('Riot event details', () => {
+  it('keeps the official ID in the link and renders the start when end time is absent', () => {
+    const event: Event = { ...baseEvent, id: 'riot:117093196872746571', endDatetime: null };
+    const result = formatEventDetail(event, [], { privateChat: true });
+    expect(result.body).toContain('https://events.playriftbound.com/en-US/events/117093196872746571');
+    expect(result.body).not.toContain('uvsgames');
+    expect(result.body).toContain('20:00');
+    expect(result.body).toContain('end time unavailable');
+    for (const button of result.buttons.flat()) {
+      if ('callback_data' in button) expect(Buffer.byteLength(button.callback_data)).toBeLessThanOrEqual(64);
+    }
+  });
+
+  it('keeps unsupported team events visible without offering player tracking', () => {
+    const event: Event = { ...baseEvent, id: 'riot:117093196872746571', supportsTracking: false };
+    const result = formatEventDetail(event, [], { privateChat: true });
+    expect(result.body).toContain('1v1 only');
+    expect(JSON.stringify(result.buttons)).not.toContain('watch:start');
+  });
+});
+
 describe('formatEventDetail', () => {
   function body(event: Event = baseEvent, reg: readonly EventRegistration[] | 'unavailable' = []): string {
     return formatEventDetail(event, reg).body;

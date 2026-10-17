@@ -8,7 +8,7 @@
 // without an interface change.
 //
 // createNexusUsernamePickupHandler: sibling for `mytable-set-username`
-// flow — reads the next non-command text message as a Nexus username.
+// flow — reads the next non-command text message as a Riot display name or ID.
 
 import { Context, Markup } from 'telegraf';
 import { IUserSettingsRepository } from '../../core/ports/user-settings-repository.js';
@@ -100,7 +100,7 @@ export function createNexusUsernamePickupHandler(deps: NexusUsernamePickupDeps) 
     if (!NEXUS_USERNAME_RE.test(username)) {
       setupFlow.start(userId, flow);
       await ctx.reply(
-        'Invalid Nexus username. Use letters, numbers, _, -, . (1-64 characters).',
+        'Invalid player name or Riot ID. Use a name or name#tag (letters, numbers, spaces, _, -, and .; up to 64 characters).',
       );
       return;
     }
@@ -108,7 +108,7 @@ export function createNexusUsernamePickupHandler(deps: NexusUsernamePickupDeps) 
     setupFlow.consume(userId);
     await deps.userSettingsRepository.setNexusUsername(userId, username);
     await ctx.reply(
-      `Nexus username saved as "${username}". Use /mytable to see your pairing.`,
+      `Player name saved as "${username}". Use /mytable to see the pairing at your selected store.`,
       Markup.removeKeyboard(),
     );
   };

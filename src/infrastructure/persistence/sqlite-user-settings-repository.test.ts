@@ -123,6 +123,84 @@ describe('SqliteUserSettingsRepository — nexus username', () => {
   });
 });
 
+describe('SqliteUserSettingsRepository — /mytable store preference', () => {
+  let db: Database.Database;
+  let repo: SqliteUserSettingsRepository;
+
+  beforeEach(() => {
+    db = openDatabase(':memory:');
+    repo = new SqliteUserSettingsRepository(db);
+  });
+
+  afterEach(() => {
+    db.close();
+  });
+
+  it('returns null when no store has been selected', async () => {
+    expect(await repo.getMytableStore(123)).toBeNull();
+  });
+
+  it('round-trips the Riot organizer and its lookup location independently', async () => {
+    await repo.setMytableStore(42, {
+      organizerId: 'b6e5c1f0-2233-4a55-8666-123456789abc',
+      name: 'Card Castle',
+      latitude: 37.39,
+      longitude: -5.99,
+      timezone: 'Europe/Madrid',
+    });
+
+    const stored = await repo.getMytableStore(42);
+    expect(stored).toMatchObject({
+      organizerId: 'b6e5c1f0-2233-4a55-8666-123456789abc',
+      name: 'Card Castle',
+      latitude: 37.39,
+      longitude: -5.99,
+      timezone: 'Europe/Madrid',
+    });
+    expect(stored?.updatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+
+  it('replaces the selected store without changing the /events location', async () => {
+    await repo.setLocation(42, { latitude: 1, longitude: 2, radiusKm: 30 });
+    await repo.setMytableStore(42, {
+      organizerId: 'first-organizer',
+      name: 'First Store',
+      latitude: 3,
+      longitude: 4,
+      timezone: 'UTC',
+    });
+    await repo.setMytableStore(42, {
+      organizerId: 'second-organizer',
+      name: 'Second Store',
+      latitude: 5,
+      longitude: 6,
+      timezone: 'Europe/Paris',
+    });
+
+    expect(await repo.getMytableStore(42)).toMatchObject({
+      organizerId: 'second-organizer',
+      name: 'Second Store',
+    });
+    expect(await repo.getLocation(42)).toMatchObject({ latitude: 1, longitude: 2, radiusKm: 30 });
+  });
+
+  it('clears the store preference without clearing the saved player name', async () => {
+    await repo.setNexusUsername(42, 'Player#EUW');
+    await repo.setMytableStore(42, {
+      organizerId: 'organizer',
+      name: 'Store',
+      latitude: 1,
+      longitude: 2,
+      timezone: 'UTC',
+    });
+
+    await repo.clearMytableStore(42);
+
+    expect(await repo.getMytableStore(42)).toBeNull();
+    expect(await repo.getNexusUsername(42)).toBe('Player#EUW');
+  });
+});
+
 describe('openDatabase (file-backed)', () => {
   let dir: string;
 
@@ -140,6 +218,13 @@ describe('openDatabase (file-backed)', () => {
     const db1 = openDatabase(path);
     const repo1 = new SqliteUserSettingsRepository(db1);
     await repo1.setLocation(1, { latitude: 10, longitude: 10 });
+    await repo1.setMytableStore(1, {
+      organizerId: 'persisted-organizer',
+      name: 'Persisted Store',
+      latitude: 11,
+      longitude: 12,
+      timezone: 'Europe/Madrid',
+    });
     db1.close();
 
     // Re-open and verify the row is still there.
@@ -148,6 +233,13 @@ describe('openDatabase (file-backed)', () => {
     const stored = await repo2.getLocation(1);
     expect(stored).not.toBeNull();
     expect(stored?.latitude).toBe(10);
+    expect(await repo2.getMytableStore(1)).toMatchObject({
+      organizerId: 'persisted-organizer',
+      name: 'Persisted Store',
+      latitude: 11,
+      longitude: 12,
+      timezone: 'Europe/Madrid',
+    });
     db2.close();
   });
 

@@ -24,6 +24,9 @@ function settings() {
     getNexusUsername: vi.fn(),
     setNexusUsername: vi.fn().mockResolvedValue(undefined),
     clearNexusUsername: vi.fn(),
+    getMytableStore: vi.fn(),
+    setMytableStore: vi.fn(),
+    clearMytableStore: vi.fn(),
   };
 }
 

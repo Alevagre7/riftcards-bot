@@ -1,0 +1,63 @@
+{
+  "data": {
+    "__typename": "Query",
+    "competeTournamentSearch": {
+      "__typename": "CompeteTournamentSearchConnection",
+      "edges": [
+        {
+          "__typename": "CompeteTournamentSearchEdge",
+          "cursor": "search-cursor-1",
+          "node": {
+            "__typename": "RbTournamentSearchResult",
+            "distanceMeters": 1576,
+            "organizer": {
+              "__typename": "OrganizerSummary",
+              "id": "00000000-0000-7000-8000-000000000001",
+              "isFavorited": null,
+              "name": "Sample Game Store",
+              "physicalAddress": {
+                "__typename": "Location",
+                "adminArea1": "EX",
+                "city": "Test City",
+                "formattedAddress": "123 Example Street, Test City",
+                "latitude": 10,
+                "longitude": 20
+              }
+            },
+            "tournament": {
+              "__typename": "CompeteTournament",
+              "config": {
+                "__typename": "RiftboundTournamentConfig",
+                "format": "LIMITED_SEALED",
+                "participantCapacity": 16,
+                "playerFormat": "ONE_V_ONE",
+                "tournamentType": "PRE_RIFT",
+                "waitlistCapacity": 0
+              },
+              "entryFee": {
+                "__typename": "CompeteEntryFee",
+                "currency": "EUR",
+                "minorUnits": 3500
+              },
+              "id": "700000000000000001",
+              "name": "Sample Riftbound Tournament",
+              "pricing": "PAID",
+              "registrantCounts": [
+                {
+                  "__typename": "TournamentRegistrantCount",
+                  "count": 8,
+                  "status": "REGISTERED"
+                }
+              ],
+              "startsAt": "2026-10-18T15:00:00Z"
+            }
+          }
+        }
+      ],
+      "pageInfo": {
+        "endCursor": "search-cursor-1",
+        "hasNextPage": false
+      }
+    }
+  }
+}

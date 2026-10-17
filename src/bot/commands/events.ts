@@ -1,4 +1,5 @@
 import { Context, Markup } from 'telegraf';
+import type { EventId } from '../../core/entities/event-id.js';
 import { EventListing } from '../../core/entities/event-listing.js';
 import { IEventRepository, EventLocation } from '../../core/ports/event-repository.js';
 import { IEventListingRepository } from '../../core/ports/event-listing-repository.js';
@@ -8,6 +9,7 @@ import { formatEventList } from '../formatters/event-list-formatter.js';
 import { formatEventDetail, EventWatchDetailState } from '../formatters/event-detail-formatter.js';
 import { setupFlow } from '../state/setup-flow.js';
 import type { IEventNavigationContext } from '../state/event-navigation-context.js';
+import { parseEventReference } from '../utils/event-callback-codec.js';
 import { stripCommand } from '../utils/strip-command.js';
 import { kmToMiles, milesToKm } from '../../utils/units.js';
 
@@ -15,6 +17,7 @@ import { kmToMiles, milesToKm } from '../../utils/units.js';
 // is fixed at 4 so the keyboard is a single row; if the array grows
 // past 4, Markup.inlineKeyboard will wrap to additional rows
 // automatically.
+
 const EVENT_WINDOW_OPTIONS: readonly { label: string; days: number }[] = [
   { label: '1 day', days: 1 },
   { label: '3 days', days: 3 },
@@ -106,7 +109,7 @@ export async function renderEventList(
   // The upstream may return events that started within the lookback
   // but have since ended (e.g. a 1h event that started 11h ago).
   const events = rawEvents.filter(
-    (ev) => new Date(ev.endDatetime).getTime() >= now.getTime(),
+    (ev) => ev.endDatetime == null || new Date(ev.endDatetime).getTime() >= now.getTime(),
   );
 
   // Sort by start ascending — in-progress events (started in the
@@ -146,7 +149,7 @@ export async function renderEventWindowMenu(ctx: Context): Promise<void> {
 export async function renderEventDetail(
   ctx: Context,
   deps: EventsCommandDeps,
-  id: number,
+  id: EventId,
 ): Promise<void> {
   await ctx.sendChatAction('typing');
 
@@ -284,7 +287,7 @@ function parseAction(rawArgs: string): EventsAction {
   if (arg === 'set' || arg.startsWith('set ')) return 'set';
   if (arg === 'clear') return 'clear';
   // Locator URL → direct event lookup (debug path).
-  if (/^https?:\/\/locator\.riftbound\.uvsgames\.com\/events\/\d+/.test(arg)) {
+  if (parseEventReference(rawArgs.trim()) !== null && !/^\d+$/.test(arg)) {
     return 'event-id';
   }
   // Numeric arg: large (>= EVENT_ID_THRESHOLD) = event id, small = days.
@@ -322,7 +325,7 @@ export function createEventsCommand(deps: EventsCommandDeps) {
           '/events \u2014 upcoming events at your location (default 7 days)\n' +
           '/events &lt;N&gt; \u2014 upcoming events in the next N days\n' +
           '/events &lt;id&gt; \u2014 show a specific event by id (debug)\n' +
-          '/events &lt;locator-url&gt; \u2014 show the event at that locator link\n' +
+          '/events &lt;locator-url&gt; \u2014 show an event from its official link\n' +
           '/events set \u2014 share your location (or use the Share button)\n' +
           '/events clear \u2014 forget your saved location',
       );
@@ -331,11 +334,9 @@ export function createEventsCommand(deps: EventsCommandDeps) {
 
     if (action === 'event-id') {
       const trimmed = rawArgs.trim();
-      const id = /^\d+$/.test(trimmed)
-        ? Number(trimmed)
-        : Number(trimmed.match(/\/events\/(\d+)/i)?.[1] ?? '0') || null;
+      const id = parseEventReference(trimmed);
       if (id == null) {
-        await ctx.reply('Could not read the event id. Use a bare number or a locator URL.');
+        await ctx.reply('Could not read the event id. Use an event ID or an official PlayRiftbound URL.');
         return;
       }
       const userId = ctx.from?.id;

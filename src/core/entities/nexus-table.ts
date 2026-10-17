@@ -6,6 +6,7 @@ export interface NexusStore {
   readonly id: string;
   readonly name: string;
   readonly address: string;
+  readonly timezone?: string;
 }
 
 export interface NexusOpponent {
@@ -40,6 +41,7 @@ export interface NexusEvent {
   readonly store: NexusStore;
   readonly startDate: Date;
   readonly format: string;
+  readonly locatorUrl?: string;
 }
 
 export interface NexusStatus {

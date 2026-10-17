@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import Database from 'better-sqlite3';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { SqliteEventWatchRepository } from './sqlite-event-watch-repository.js';
 import { openDatabase } from './open-database.js';
 import { EventWatchDraft } from '../../core/ports/event-watch-repository.js';
@@ -128,5 +130,82 @@ describe('SqliteEventWatchRepository (in-memory)', () => {
     const all = await repo.list();
     expect(all.length).toBe(2);
     expect(all.map((watch) => watch.telegramId).sort()).toEqual([1, 2]);
+  });
+
+  it('round-trips exact Riot and player UUIDs after the repository is recreated', async () => {
+    const created = await repo.create(draft({
+      eventId: 'riot:12345678901234567890',
+      registrationId: 'player-uuid-8f0c4dd1-4e7a-4d3a-a9f5',
+    }));
+    expect(created?.eventId).toBe('riot:12345678901234567890');
+
+    await repo.recordObservation(42, created!.revision, {
+      kind: 'success',
+      checkedAt: new Date().toISOString(),
+      changed: true,
+      snapshot: {
+        round: 1,
+        roundId: 'round-uuid-01234567890123456789',
+        table: 4,
+        opponent: 'rival',
+        result: 'win',
+      },
+    });
+
+    const restartedRepository = new SqliteEventWatchRepository(db);
+    const stored = await restartedRepository.get(42);
+    expect(stored?.eventId).toBe('riot:12345678901234567890');
+    expect(stored?.registrationId).toBe('player-uuid-8f0c4dd1-4e7a-4d3a-a9f5');
+    expect(stored?.lastSeenRoundId).toBe('round-uuid-01234567890123456789');
+  });
+
+  it('migrates old numeric event IDs without changing their domain type', async () => {
+    const legacyDb = new Database(':memory:');
+    try {
+      legacyDb.exec(`
+        CREATE TABLE user_event_watches (
+          telegram_id INTEGER PRIMARY KEY,
+          event_id INTEGER NOT NULL,
+          event_name TEXT NOT NULL,
+          event_username TEXT NOT NULL,
+          last_seen_round INTEGER,
+          last_seen_table INTEGER,
+          last_seen_opponent TEXT,
+          last_seen_result TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          revision TEXT NOT NULL DEFAULT '',
+          last_checked_at TEXT,
+          consecutive_failures INTEGER NOT NULL DEFAULT 0,
+          consecutive_missing INTEGER NOT NULL DEFAULT 0,
+          has_observed_pairing INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX idx_user_event_watches_event_id ON user_event_watches (event_id);
+        INSERT INTO user_event_watches (
+          telegram_id, event_id, event_name, event_username, last_seen_round,
+          last_seen_table, last_seen_opponent, last_seen_result, created_at,
+          updated_at, revision, has_observed_pairing
+        ) VALUES (
+          99, 735205, 'Legacy event', 'legacy_player', 3,
+          7, 'rival', 'loss', '2026-08-01T12:00:00.000Z',
+          '2026-08-01T12:01:00.000Z', 'legacy-revision', 1
+        );
+      `);
+      legacyDb.exec(readFileSync(fileURLToPath(
+        new URL('./migrations/006_event_watch_provider_ids.sql', import.meta.url),
+      ), 'utf8'));
+
+      const legacyRepository = new SqliteEventWatchRepository(legacyDb);
+      const migrated = await legacyRepository.get(99);
+      expect(migrated?.eventId).toBe(735205);
+      expect(typeof migrated?.eventId).toBe('number');
+      expect(migrated?.eventUsername).toBe('legacy_player');
+      expect(migrated?.lastSeenRound).toBe(3);
+      expect(migrated?.lastSeenRoundId).toBeNull();
+      expect(migrated?.registrationId).toBeUndefined();
+      expect(migrated?.revision).toBe('legacy-revision');
+    } finally {
+      legacyDb.close();
+    }
   });
 });

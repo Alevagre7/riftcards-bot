@@ -12,6 +12,13 @@ describe('NEXUS_USERNAME_RE', () => {
     expect(NEXUS_USERNAME_RE.test('John Jacob Jingleheimer Schmidt')).toBe(true);
   });
 
+  it('accepts Unicode names and Riot ID taglines', () => {
+    expect(NEXUS_USERNAME_RE.test('Éowyn')).toBe(true);
+    expect(NEXUS_USERNAME_RE.test('夜明け')).toBe(true);
+    expect(NEXUS_USERNAME_RE.test('Dolores Deano#EUW')).toBe(true);
+    expect(NEXUS_USERNAME_RE.test('玩家#1234')).toBe(true);
+  });
+
   it('accepts usernames with dots, hyphens, and underscores', () => {
     expect(NEXUS_USERNAME_RE.test('player.one')).toBe(true);
     expect(NEXUS_USERNAME_RE.test('player-one')).toBe(true);
@@ -31,5 +38,8 @@ describe('NEXUS_USERNAME_RE', () => {
     expect(NEXUS_USERNAME_RE.test('player@one')).toBe(false);
     expect(NEXUS_USERNAME_RE.test('player/one')).toBe(false);
     expect(NEXUS_USERNAME_RE.test('player!one')).toBe(false);
+    expect(NEXUS_USERNAME_RE.test('player#')).toBe(false);
+    expect(NEXUS_USERNAME_RE.test('#tag')).toBe(false);
+    expect(NEXUS_USERNAME_RE.test('player#tag#extra')).toBe(false);
   });
 });

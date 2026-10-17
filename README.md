@@ -16,7 +16,7 @@ project is not part of the official Riot developer ecosystem.
 - `/events` — upcoming Riftbound events near a configurable location,
   with detail, standings, table, and private-chat watch flows.
 - `/watching` — inspect, refresh, change, or stop your active event watch.
-- `/mytable` — look up and save a Nexus pairing username.
+- `/mytable` — look up a Riot pairing at your selected store and save your player name.
 - `/new` — show cards updated during the current UTC day.
 - `@RiftCardsBot <query>` — inline search with thumbnails (works in
   any chat).
@@ -67,18 +67,48 @@ values.
 | `WEBHOOK_URL` | conditional | — | Required when `NODE_ENV=production` |
 | `API_TIMEOUT_MS` | no | `10000` | HTTP request timeout to the card source |
 | `API_RETRY_ATTEMPTS` | no | `3` | Retry count with exponential backoff |
-| `RIFTBOUND_V2_BASE_URL` | no | official V2 URL | Event details, registrations, and live results |
-| `RIFTFOUND_BASE_URL` | no | Riftfound URL | Primary event-list provider |
+| `PLAYRIFTBOUND_BASE_URL` | no | `https://events.playriftbound.com` | Official Riot events origin (only this value is accepted) |
+| `RIFTBOUND_V2_BASE_URL` | no | official V2 URL | Legacy UVS references and existing watches only |
 | `EVENTS_LATITUDE` | no | `37.39` | Latitude for event search (Seville) |
 | `EVENTS_LONGITUDE` | no | `-5.99` | Longitude for event search (Seville) |
 | `EVENTS_RADIUS_KM` | no | `80` | Search radius in kilometres |
 | `EVENTS_DAYS_AHEAD` | no | `7` | Look-ahead window for events |
-| `NEXUS_TABLE_API_URL` | no | hosted Nexus endpoint | Nexus pairing lookup endpoint |
-| `NEXUS_TABLE_API_TOKEN` | no | — | Optional Nexus endpoint token |
 | `NEXUS_WATCHER_ENABLED` | no | `true` | Enable background event-watch polling |
 | `NEXUS_WATCHER_INTERVAL_MS` | no | `30000` | Watcher polling interval |
 | `ADMIN_TELEGRAM_IDS` | no | — | Comma-separated Telegram IDs allowed to use `/admin` |
 | `USER_SETTINGS_DB_PATH` | no | `/data/riftbot.db` | SQLite path for user settings and watches |
+
+---
+
+## Riot events and player tracking
+
+Use `/events` to choose a time window near your saved location. Use `/events set`
+to change the location. You can also open an official event URL with
+`/events https://events.playriftbound.com/en-US/events/<id>`.
+The supported search radius is at most 100 miles (about 161 km).
+
+In a private chat, open an event, tap Watch, and select a player. Use `/watching`
+to refresh or stop the watch. Player tracking currently supports 1v1 events.
+The bot reads public data. It does not require a Riot login or report results.
+
+For `/mytable`, first select a store using one of its official event URLs:
+
+```text
+/mytable store https://events.playriftbound.com/en-US/events/<id> Europe/Madrid
+/mytable set PlayerName#TAG
+/mytable
+```
+
+The bot estimates the store timezone locally from Riot's coordinates. The
+optional IANA timezone overrides that estimate and defines the store's calendar day. `/mytable <username>` performs a
+one-off lookup. `/mytable clear` forgets your saved player name. The store
+preference and player name are separate from the player selected for Watch.
+
+Riot's website API has no developer stability guarantee. The client uses
+persisted query IDs and updates them from official website bundles when needed.
+Unknown cancellation, result conflicts, and intentional-draw status remain
+unknown. A missing event and an API failure are handled separately.
+See [migration scope and follow-up work](docs/plans/riot-events-1v1.md).
 
 ---
 
@@ -159,8 +189,10 @@ implement those interfaces and are wired in at startup.
 
 Two card-source adapters are available: **RiftapiAdapter** (primary)
 and **RiftcodexAdapter** (fallback), selected by the `CARD_SOURCE` env
-var. Event listings use Riftfound with official V2 fallback; official V2
-also provides event details and live tournament data.
+var. New event lists, details, results, and `/mytable` use Riot directly through
+its public persisted GraphQL queries. Numeric legacy references use the UVS
+adapter. A failed Riot request never falls back to an unrelated UVS event.
+The old Riftfound and Nexus adapters are not wired into the bot.
 
 ```typescript
 import { ICardRepository } from '../../core/ports/card-repository.js';

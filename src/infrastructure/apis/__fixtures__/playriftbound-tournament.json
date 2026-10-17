@@ -1,0 +1,292 @@
+{
+  "data": {
+    "competeTournaments": [
+      {
+        "__typename": "CompeteTournament",
+        "checkIn": null,
+        "config": {
+          "__typename": "RiftboundTournamentConfig",
+          "deckSubmissionPolicy": "NOT_ALLOWED",
+          "format": "LIMITED_SEALED",
+          "matchFormat": "BO1",
+          "participantCapacity": 40,
+          "playerFormat": "ONE_V_ONE",
+          "roundCount": 5,
+          "structure": "SWISS",
+          "tournamentType": "PRE_RIFT",
+          "waitlistCapacity": 0,
+          "waitlistPromotionPolicy": "AUTOMATIC"
+        },
+        "description": "Sample event description",
+        "endsAt": "2026-10-18T17:00:00Z",
+        "entryFee": null,
+        "id": "700000000000000001",
+        "name": "Sample Riftbound Tournament",
+        "organizerId": "00000000-0000-7000-8000-000000000001",
+        "pricing": "FREE",
+        "registrantCounts": [
+          {
+            "__typename": "TournamentRegistrantCount",
+            "count": 22,
+            "status": "REGISTERED"
+          }
+        ],
+        "registrationEndAt": null,
+        "registrationPolicy": "OPEN",
+        "registrationStartAt": null,
+        "stages": [
+          {
+            "__typename": "CompeteStage",
+            "esportsStageId": "700000000000000031",
+            "name": null,
+            "sections": [
+              {
+                "__typename": "CompeteSection",
+                "esportsSectionId": "700000000000000032",
+                "rounds": [
+                  {
+                    "__typename": "CompeteRound",
+                    "byeTeamIds": [],
+                    "endOfRoundStandings": [
+                      {
+                        "__typename": "CompeteSwissStandingEntry",
+                        "esportsTeamId": "700000000000000033",
+                        "gameWinPercentage": "1",
+                        "matchDraws": 0,
+                        "matchLosses": 0,
+                        "matchPoints": 3,
+                        "matchWins": 1,
+                        "opponentGameWinPercentage": "0.33",
+                        "opponentMatchWinPercentage": "0.33",
+                        "rank": 3
+                      },
+                      {
+                        "__typename": "CompeteSwissStandingEntry",
+                        "esportsTeamId": "700000000000000034",
+                        "gameWinPercentage": "0.33",
+                        "matchDraws": 0,
+                        "matchLosses": 1,
+                        "matchPoints": 0,
+                        "matchWins": 0,
+                        "opponentGameWinPercentage": "1",
+                        "opponentMatchWinPercentage": "1",
+                        "rank": 18
+                      }
+                    ],
+                    "matches": [
+                      {
+                        "__typename": "CompeteMatch",
+                        "esportsMatchId": "700000000000000035",
+                        "games": [
+                          {
+                            "__typename": "CompeteGame",
+                            "esportsGameId": "700000000000000036",
+                            "number": 1,
+                            "teamOutcomes": [
+                              {
+                                "__typename": "CompeteTeamOutcome",
+                                "esportsTeamId": "700000000000000034",
+                                "outcome": "LOSS"
+                              },
+                              {
+                                "__typename": "CompeteTeamOutcome",
+                                "esportsTeamId": "700000000000000033",
+                                "outcome": "WIN"
+                              }
+                            ]
+                          }
+                        ],
+                        "status": "IN_PROGRESS",
+                        "tableNumber": 10,
+                        "teamOutcomes": [
+                          {
+                            "__typename": "CompeteTeamOutcome",
+                            "esportsTeamId": "700000000000000034",
+                            "outcome": "LOSS"
+                          },
+                          {
+                            "__typename": "CompeteTeamOutcome",
+                            "esportsTeamId": "700000000000000033",
+                            "outcome": "WIN"
+                          }
+                        ],
+                        "teams": [
+                          {
+                            "__typename": "CompeteTeam",
+                            "esportsTeamId": "700000000000000034",
+                            "players": [
+                              {
+                                "__typename": "CompetePlayer",
+                                "displayName": "Player 1",
+                                "id": "00000000-0000-4000-8000-000000000002"
+                              }
+                            ]
+                          },
+                          {
+                            "__typename": "CompeteTeam",
+                            "esportsTeamId": "700000000000000033",
+                            "players": [
+                              {
+                                "__typename": "CompetePlayer",
+                                "displayName": "Player 2",
+                                "id": "00000000-0000-4000-8000-000000000003"
+                              }
+                            ]
+                          }
+                        ]
+                      }
+                    ],
+                    "roundDuration": 30,
+                    "roundNumber": 1,
+                    "startedAt": "2026-10-16T15:45:28.278829211Z",
+                    "status": "FINALIZED"
+                  },
+                  {
+                    "__typename": "CompeteRound",
+                    "byeTeamIds": [
+                      "700000000000000037"
+                    ],
+                    "endOfRoundStandings": [],
+                    "matches": [],
+                    "roundDuration": 30,
+                    "roundNumber": 5,
+                    "startedAt": "2026-10-16T18:18:48.448939623Z",
+                    "status": "FINALIZED"
+                  }
+                ]
+              }
+            ]
+          }
+        ],
+        "startsAt": "2026-10-18T15:00:00Z",
+        "tournamentParticipants": [
+          {
+            "__typename": "CompeteTournamentParticipant",
+            "esportsTeamId": "700000000000000034",
+            "id": "00000000-0000-4000-8000-000000000004",
+            "player": {
+              "__typename": "CompetePlayer",
+              "displayName": "Player 1",
+              "id": "00000000-0000-4000-8000-000000000002"
+            },
+            "status": "DROPPED"
+          },
+          {
+            "__typename": "CompeteTournamentParticipant",
+            "esportsTeamId": "700000000000000037",
+            "id": "00000000-0000-4000-8000-000000000005",
+            "player": {
+              "__typename": "CompetePlayer",
+              "displayName": "Player 3",
+              "id": "00000000-0000-4000-8000-000000000006"
+            },
+            "status": "DROPPED"
+          },
+          {
+            "__typename": "CompeteTournamentParticipant",
+            "esportsTeamId": "700000000000000033",
+            "id": "00000000-0000-4000-8000-000000000007",
+            "player": {
+              "__typename": "CompetePlayer",
+              "displayName": "Player 2",
+              "id": "00000000-0000-4000-8000-000000000003"
+            },
+            "status": "ACTIVE"
+          },
+          {
+            "__typename": "CompeteTournamentParticipant",
+            "esportsTeamId": "700000000000000038",
+            "id": "00000000-0000-4000-8000-000000000008",
+            "player": {
+              "__typename": "CompetePlayer",
+              "displayName": "Player 4",
+              "id": "00000000-0000-4000-8000-000000000009"
+            },
+            "status": "DROPPED"
+          }
+        ],
+        "tournamentProgram": {
+          "__typename": "TournamentProgramSummary",
+          "id": "00000000-0000-4000-8000-000000000010",
+          "programName": "Radiance Pre-Rift"
+        },
+        "tournamentRegistrants": [
+          {
+            "__typename": "TournamentRegistrant",
+            "acceptedTermsAt": "2026-09-29T14:21:27.309658Z",
+            "checkedIn": true,
+            "id": "00000000-0000-4000-8000-000000000011",
+            "player": {
+              "__typename": "CompetePlayer",
+              "displayName": "Player 4",
+              "id": "00000000-0000-4000-8000-000000000009",
+              "tagLine": "TEST"
+            },
+            "status": "REGISTERED",
+            "team": {
+              "__typename": "CompeteTeam",
+              "id": "00000000-0000-4000-8000-000000000012"
+            },
+            "waitlistPosition": null
+          },
+          {
+            "__typename": "TournamentRegistrant",
+            "acceptedTermsAt": "2026-10-11T10:18:05.463729Z",
+            "checkedIn": true,
+            "id": "00000000-0000-4000-8000-000000000013",
+            "player": {
+              "__typename": "CompetePlayer",
+              "displayName": "Player 1",
+              "id": "00000000-0000-4000-8000-000000000002",
+              "tagLine": "TEST"
+            },
+            "status": "REGISTERED",
+            "team": {
+              "__typename": "CompeteTeam",
+              "id": "00000000-0000-4000-8000-000000000014"
+            },
+            "waitlistPosition": null
+          },
+          {
+            "__typename": "TournamentRegistrant",
+            "acceptedTermsAt": "2026-10-11T10:47:48.595226Z",
+            "checkedIn": true,
+            "id": "00000000-0000-4000-8000-000000000015",
+            "player": {
+              "__typename": "CompetePlayer",
+              "displayName": "Player 3",
+              "id": "00000000-0000-4000-8000-000000000006",
+              "tagLine": "TEST"
+            },
+            "status": "REGISTERED",
+            "team": {
+              "__typename": "CompeteTeam",
+              "id": "00000000-0000-4000-8000-000000000016"
+            },
+            "waitlistPosition": null
+          },
+          {
+            "__typename": "TournamentRegistrant",
+            "acceptedTermsAt": "2026-10-11T19:23:32.171859Z",
+            "checkedIn": true,
+            "id": "00000000-0000-4000-8000-000000000017",
+            "player": {
+              "__typename": "CompetePlayer",
+              "displayName": "Player 2",
+              "id": "00000000-0000-4000-8000-000000000003",
+              "tagLine": "TEST"
+            },
+            "status": "REGISTERED",
+            "team": {
+              "__typename": "CompeteTeam",
+              "id": "00000000-0000-4000-8000-000000000018"
+            },
+            "waitlistPosition": null
+          }
+        ],
+        "updatedAt": "2026-10-16T18:51:29.928463Z",
+        "visibility": "LISTED"
+      }
+    ]
+  }
+}

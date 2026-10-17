@@ -93,6 +93,45 @@ describe('createEventWatchManager', () => {
     })).resolves.toEqual({ kind: 'needs-confirmation', current });
   });
 
+  it('rejects 2v2 events with a clear watchability reason', async () => {
+    const deps = repositories();
+    const manager = createEventWatchManager({
+      ...deps,
+      defaultLocation: { latitude: 0, longitude: 0, numMiles: 25 },
+    });
+
+    await expect(manager.requestSubscription(7, {
+      eventId: 42,
+      eventName: 'Doubles Event',
+      eventUsername: 'Alice',
+      supportsTracking: false,
+    })).resolves.toEqual({
+      kind: 'unsupported',
+      reason: 'Player watches support 1v1 events only.',
+    });
+    expect(deps.watchRepository.create).not.toHaveBeenCalled();
+  });
+
+  it('persists the selected registration identity with a new watch', async () => {
+    const deps = repositories();
+    deps.watchRepository.create = vi.fn().mockImplementation(async (draft) => watch(draft));
+    const manager = createEventWatchManager({
+      ...deps,
+      defaultLocation: { latitude: 0, longitude: 0, numMiles: 25 },
+    });
+
+    await manager.requestSubscription(7, {
+      eventId: 42,
+      eventName: 'Test Event',
+      eventUsername: 'Alice',
+      registrationId: 'player-uuid',
+    });
+
+    expect(deps.watchRepository.create).toHaveBeenCalledWith(expect.objectContaining({
+      registrationId: 'player-uuid',
+    }));
+  });
+
   it('protects replacement and stop with the current revision', async () => {
     const deps = repositories();
     const current = watch();
@@ -141,5 +180,26 @@ describe('createEventWatchManager', () => {
       { fresh: true },
     );
     expect(deps.watchRepository.recordObservation).not.toHaveBeenCalled();
+  });
+
+  it('uses registration IDs to resolve duplicate display names in live status', async () => {
+    const deps = repositories();
+    const current = watch({ registrationId: 'player-2' });
+    deps.watchRepository.get = vi.fn().mockResolvedValue(current);
+    deps.eventRepository.getEventDetail = vi.fn().mockResolvedValue({
+      event: { displayStatus: 'inProgress' },
+      currentRound: { id: 'round-2', roundNumber: 2 },
+      pairings: [
+        { player1: 'Alice', player1Id: 'player-1', player2: 'Bob', tableNumber: 1, outcome: 'pending' },
+        { player1: 'Alice', player1Id: 'player-2', player2: 'Charlie', tableNumber: 2, outcome: 'pending' },
+      ],
+    });
+    const manager = createEventWatchManager({
+      ...deps,
+      defaultLocation: { latitude: 0, longitude: 0, numMiles: 25 },
+    });
+
+    const result = await manager.refreshStatus(7);
+    expect(result?.live).toEqual({ round: 2, table: 2, opponent: 'Charlie', result: null });
   });
 });

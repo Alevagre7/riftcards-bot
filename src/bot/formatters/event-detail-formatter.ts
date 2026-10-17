@@ -2,6 +2,7 @@ import type { InlineKeyboardButton } from '@telegraf/types/markup.js';
 import { Event } from '../../core/entities/event.js';
 import { EventRegistration } from '../../core/entities/event-registration.js';
 import { escapeHtml } from './card-formatter.js';
+import { encodeEventId } from '../utils/event-callback-codec.js';
 import { joinTelegramLines } from '../utils/telegram-text.js';
 
 // ---------------------------------------------------------------------------
@@ -95,7 +96,7 @@ export function formatEventDetail(
 
   // Date/time (event's own timezone)
   const start = new Date(event.startDatetime);
-  const end = new Date(event.endDatetime);
+  const end = new Date(event.endDatetime ?? NaN);
   if (Number.isFinite(start.getTime()) && Number.isFinite(end.getTime())) {
     const dateStr = dateFmt.format(start);
     const startTime = timeFmt.format(start);
@@ -103,6 +104,8 @@ export function formatEventDetail(
     lines.push(
       `\uD83D\uDD50 <b>${dateStr} \u00B7 ${startTime}\u2013${endTime}</b> (${escapeHtml(tz)})`,
     );
+  } else if (Number.isFinite(start.getTime())) {
+    lines.push(`🕐 <b>${dateFmt.format(start)} · ${timeFmt.format(start)}</b> (${escapeHtml(tz)}; end time unavailable)`);
   } else {
     lines.push(`\uD83D\uDD50 Time unavailable (${escapeHtml(tz)})`);
   }
@@ -155,7 +158,9 @@ export function formatEventDetail(
   }
 
   // Locator page (synthesized — the V2 API has no locator URL field)
-  const locatorUrl = `https://locator.riftbound.uvsgames.com/events/${event.id}`;
+  const locatorUrl = event.locatorUrl ?? (typeof event.id === 'string'
+    ? `https://events.playriftbound.com/en-US/events/${event.id.slice(5)}`
+    : `https://locator.riftbound.uvsgames.com/events/${event.id}`);
   lines.push(`\uD83D\uDD17 <a href="${locatorUrl}">${locatorUrl}</a>`);
 
   // Build buttons using the numeric event id for callback data
@@ -166,13 +171,14 @@ export function formatEventDetail(
   // is unreachable)
   if (options?.isStarted !== false) {
     buttons.push(
-      [{ text: '\uD83C\uDFC6 Leaderboard', callback_data: `event:${event.id}:leaderboard` }],
-      [{ text: '\uD83D\uDCCB All tables', callback_data: `event:${event.id}:rounds` }],
+      [{ text: '\uD83C\uDFC6 Leaderboard', callback_data: `event:${encodeEventId(event.id)}:leaderboard` }],
+      [{ text: '\uD83D\uDCCB All tables', callback_data: `event:${encodeEventId(event.id)}:rounds` }],
     );
   }
 
   // Watch is only useful while the event is upcoming or in progress.
   if (
+    event.supportsTracking !== false &&
     options?.privateChat === true &&
     (event.displayStatus === 'upcoming' || event.displayStatus === 'inProgress')
   ) {
@@ -183,12 +189,16 @@ export function formatEventDetail(
         ]);
         break;
       case 'other':
-        buttons.push([{ text: '\uD83D\uDC41 Change watch', callback_data: `event:${event.id}:watch:start` }]);
+        buttons.push([{ text: '\uD83D\uDC41 Change watch', callback_data: `event:${encodeEventId(event.id)}:watch:start` }]);
         break;
       default:
-        buttons.push([{ text: '\uD83D\uDC41 Watch', callback_data: `event:${event.id}:watch:start` }]);
+        buttons.push([{ text: '\uD83D\uDC41 Watch', callback_data: `event:${encodeEventId(event.id)}:watch:start` }]);
         break;
     }
+  }
+
+  if (event.supportsTracking === false) {
+    lines.push('Player tracking for this format is not supported yet (1v1 only).');
   }
 
   // Back-to-list visibility follows the caller's navigation decision.

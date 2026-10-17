@@ -36,4 +36,14 @@ describe('loadConfig', () => {
 
     expect(() => loadConfig()).toThrow();
   });
+
+  it('uses the official Riot origin without requiring Nexus or an aggregator', () => {
+    expect(loadConfig().playriftboundBaseUrl).toBe('https://events.playriftbound.com');
+  });
+
+  it('rejects unofficial events origin overrides', () => {
+    vi.stubEnv('PLAYRIFTBOUND_BASE_URL', 'https://unofficial.test');
+    expect(() => loadConfig()).toThrow();
+  });
+
 });

@@ -5,7 +5,7 @@ import type { EventPairing } from '../../core/entities/event-detail.js';
 
 type WatchSnapshot = Pick<
   EventWatch,
-  'lastSeenRound' | 'lastSeenTable' | 'lastSeenOpponent' | 'lastSeenResult' | 'hasObservedPairing'
+  'lastSeenRound' | 'lastSeenRoundId' | 'lastSeenTable' | 'lastSeenOpponent' | 'lastSeenResult' | 'hasObservedPairing'
 >;
 
 function prev(overrides?: Partial<WatchSnapshot>): WatchSnapshot {
@@ -88,6 +88,17 @@ describe('detectPairingChange', () => {
     expect(result.reasons).toContain('result-changed');
   });
 
+  it('detects a phase transition when round numbers repeat but round IDs differ', () => {
+    const result = detectPairingChange(
+      prev({ lastSeenRound: 1, lastSeenRoundId: 'phase-1-round-1' }),
+      pairing(),
+      1,
+      'Alice',
+      'phase-2-round-1',
+    );
+    expect(result.reasons).toContain('round-changed');
+  });
+
   it('does not notify for pending, conflict, or unavailable outcomes', () => {
     for (const outcome of ['pending', 'conflict', 'unavailable'] as const) {
       const result = detectPairingChange(
@@ -112,6 +123,13 @@ describe('detectPairingChange', () => {
       pairing({ outcome: 'bye', isBye: true }),
       'Alice',
     )).toBe('bye');
+  });
+
+  it('does not call an unattributed loss marker a player loss', () => {
+    expect(pairingToResult(
+      pairing({ status: 'COMPLETE', outcome: 'loss', winner: null }),
+      'Alice',
+    )).toBeNull();
   });
 
   it('reports no changes for the same snapshot', () => {

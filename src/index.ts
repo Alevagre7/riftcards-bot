@@ -4,9 +4,11 @@ import { loadConfig } from './config.js';
 import { RiftapiAdapter } from './infrastructure/apis/riftapi.adapter.js';
 import { RiftcodexAdapter } from './infrastructure/apis/riftcodex.adapter.js';
 import { RiftboundV2Adapter } from './infrastructure/apis/riftbound-v2.adapter.js';
-import { RiftfoundEventsAdapter } from './infrastructure/apis/riftfound-events.adapter.js';
-import { FallbackEventListingRepository } from './infrastructure/apis/fallback-event-listing-repository.js';
-import { NexusTableAdapter } from './infrastructure/apis/nexus-table.adapter.js';
+import { PlayRiftboundAdapter } from './infrastructure/apis/playriftbound.adapter.js';
+import { ProviderEventRepository } from './infrastructure/apis/provider-event-repository.js';
+import { PlayRiftboundTableAdapter } from './infrastructure/apis/playriftbound-table.adapter.js';
+import type { EventId } from './core/entities/event-id.js';
+import { encodeEventId } from './bot/utils/event-callback-codec.js';
 import { INexusTableRepository } from './core/ports/nexus-table-repository.js';
 import { ICardRepository } from './core/ports/card-repository.js';
 import { IUserSettingsRepository } from './core/ports/user-settings-repository.js';
@@ -60,21 +62,20 @@ async function main() {
   const config = loadConfig();
   const cardRepository = buildCardRepository(config);
 
-  // Events: Riftfound is the primary list provider; official V2 remains
-  // authoritative for event detail and live tournament data.
-  const officialEventRepository = new RiftboundV2Adapter({
+  // New events and live data are read directly from Riot. Numeric UVS
+  // references retain their original provider; Riot failures never fall back.
+  const riotEvents = new PlayRiftboundAdapter({
+    baseUrl: config.playriftboundBaseUrl,
+    timeoutMs: config.apiTimeoutMs,
+    retryAttempts: config.apiRetryAttempts,
+  });
+  const legacyEvents = new RiftboundV2Adapter({
     baseUrl: config.riftboundV2BaseUrl,
     timeoutMs: config.apiTimeoutMs,
     retryAttempts: config.apiRetryAttempts,
   });
-  const riftfoundListingRepository = new RiftfoundEventsAdapter({
-    baseUrl: config.riftfoundBaseUrl,
-    timeoutMs: config.apiTimeoutMs,
-    retryAttempts: config.apiRetryAttempts,
-  });
-  const eventListingRepository: IEventListingRepository =
-    new FallbackEventListingRepository(riftfoundListingRepository, officialEventRepository);
-  const eventRepository: IEventRepository = officialEventRepository;
+  const eventListingRepository: IEventListingRepository = riotEvents;
+  const eventRepository: IEventRepository = new ProviderEventRepository(riotEvents, legacyEvents);
   const defaultLocation: EventLocation = {
     latitude: config.eventsLatitude,
     longitude: config.eventsLongitude,
@@ -93,23 +94,21 @@ async function main() {
   const eventWatchRepository: IEventWatchRepository =
     new SqliteEventWatchRepository(db);
 
-  // Nexus Table (mytable show/set/clear — no watch)
-  const nexusTableRepository: INexusTableRepository = new NexusTableAdapter({
-    baseUrl: config.nexusTableApiUrl,
-    ...(config.nexusTableApiToken ? { token: config.nexusTableApiToken } : {}),
-    timeoutMs: config.apiTimeoutMs,
-    retryAttempts: config.apiRetryAttempts,
+  // /mytable uses a separately selected store and public Riot rosters.
+  const nexusTableRepository: INexusTableRepository = new PlayRiftboundTableAdapter({
+    eventRepository: riotEvents,
+    eventListingRepository: riotEvents,
   });
 
   // Build the event watcher service (background polling)
   const notify = async (
     telegramId: number,
-    notification: { body: string; eventId: number; revision: string; canStop: boolean },
+    notification: { body: string; eventId: EventId; revision: string; canStop: boolean },
   ): Promise<void> => {
     // Watcher text includes upstream player names. Send it as plain text so
     // a name containing Telegram markup cannot break delivery.
     const buttons = [[
-      { text: '\uD83D\uDCC5 View event', callback_data: `event:${notification.eventId}` },
+      { text: '\uD83D\uDCC5 View event', callback_data: `event:${encodeEventId(notification.eventId)}` },
     ]];
     if (notification.canStop) {
       buttons.push([
@@ -164,7 +163,7 @@ async function main() {
     { command: 'random', description: 'Get a random card' },
     { command: 'events', description: 'Upcoming events near your saved location' },
     { command: 'watching', description: 'See and manage your active event watch' },
-    { command: 'mytable', description: 'See your current Nexus pairing' },
+    { command: 'mytable', description: 'See your current Riot event pairing' },
     { command: 'new', description: 'Cards spoiled today (UTC)' },
     { command: 'admin', description: 'Manage active event watches' },
   ]);
@@ -191,6 +190,9 @@ async function main() {
     createMytableCommand({
       nexusTableRepository,
       userSettingsRepository,
+      eventRepository: riotEvents,
+      eventListingRepository: riotEvents,
+      defaultLocation,
     }),
   );
   bot.command('new', createNewCommand({ cardRepository }));
@@ -226,7 +228,7 @@ async function main() {
   bot.action(/^card:(.+)$/, createCardActionHandler({ cardRepository }));
   bot.action('new:show-all', createNewActionHandler({ cardRepository }));
   bot.action(
-    /^(event:.+|watch:.+|admin:stop:\d+:.+)$/,
+    /^(event:.+|watch:.+|wps:.+|wpr:.+|admin:stop:\d+:.+)$/,
     createEventActionHandler({
       eventNavigationContext,
       eventRepository,

@@ -1,4 +1,5 @@
 import type { EventListing } from '../../core/entities/event-listing.js';
+import type { EventId } from '../../core/entities/event-id.js';
 
 const EVENT_LIST_TTL_MS = 5 * 60 * 1000;
 const DIRECT_ORIGIN_TTL_MS = 30 * 60 * 1000;
@@ -15,9 +16,9 @@ export interface IEventNavigationContext {
     daysAhead: number,
   ): void;
   getEventList(telegramUserId: number | undefined): EventListNavigationContext | null;
-  openEventDirectly(telegramUserId: number | undefined, eventId: number): void;
-  openEventFromList(telegramUserId: number | undefined, eventId: number): void;
-  shouldShowBackToList(telegramUserId: number | undefined, eventId: number): boolean;
+  openEventDirectly(telegramUserId: number | undefined, eventId: EventId): void;
+  openEventFromList(telegramUserId: number | undefined, eventId: EventId): void;
+  shouldShowBackToList(telegramUserId: number | undefined, eventId: EventId): boolean;
 }
 
 interface ListEntry {
@@ -27,7 +28,7 @@ interface ListEntry {
 
 class EventNavigationContext implements IEventNavigationContext {
   private readonly listContexts = new Map<number, ListEntry>();
-  private readonly directOrigins = new Map<number, Map<number, number>>();
+  private readonly directOrigins = new Map<number, Map<EventId, number>>();
 
   public constructor(private readonly clock: () => number = Date.now) {}
 
@@ -57,20 +58,20 @@ class EventNavigationContext implements IEventNavigationContext {
     return entry.context;
   }
 
-  public openEventDirectly(telegramUserId: number | undefined, eventId: number): void {
+  public openEventDirectly(telegramUserId: number | undefined, eventId: EventId): void {
     if (telegramUserId === undefined) return;
 
     this.listContexts.delete(telegramUserId);
 
     let userOrigins = this.directOrigins.get(telegramUserId);
     if (!userOrigins) {
-      userOrigins = new Map<number, number>();
+      userOrigins = new Map<EventId, number>();
       this.directOrigins.set(telegramUserId, userOrigins);
     }
     userOrigins.set(eventId, this.clock() + DIRECT_ORIGIN_TTL_MS);
   }
 
-  public openEventFromList(telegramUserId: number | undefined, eventId: number): void {
+  public openEventFromList(telegramUserId: number | undefined, eventId: EventId): void {
     if (telegramUserId === undefined) return;
 
     const userOrigins = this.directOrigins.get(telegramUserId);
@@ -82,7 +83,7 @@ class EventNavigationContext implements IEventNavigationContext {
     }
   }
 
-  public shouldShowBackToList(telegramUserId: number | undefined, eventId: number): boolean {
+  public shouldShowBackToList(telegramUserId: number | undefined, eventId: EventId): boolean {
     if (telegramUserId === undefined || this.getEventList(telegramUserId) === null) {
       return false;
     }

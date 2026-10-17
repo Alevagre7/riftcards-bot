@@ -4,6 +4,7 @@
 import Database from 'better-sqlite3';
 import { randomUUID } from 'node:crypto';
 import { EventWatch } from '../../core/entities/event-watch.js';
+import type { EventId, RoundId } from '../../core/entities/event-id.js';
 import {
   EventWatchDraft,
   EventWatchObservation,
@@ -13,11 +14,16 @@ import {
 interface EventWatchRow {
   telegram_id: number;
   revision: string;
-  event_id: number;
+  event_id: string;
+  event_id_kind: 'number' | 'riot';
   event_name: string;
   event_username: string;
+  registration_id: string | null;
+  registration_id_kind: 'number' | 'string' | null;
   has_observed_pairing: number;
   last_seen_round: number | null;
+  last_seen_round_id: string | null;
+  last_seen_round_id_kind: 'number' | 'string' | null;
   last_seen_table: number | null;
   last_seen_opponent: string | null;
   last_seen_result: string | null;
@@ -34,15 +40,43 @@ function newRevision(): string {
   return `${Date.now().toString(36)}-${randomUUID().replaceAll('-', '').slice(0, 8)}`;
 }
 
+function encodeEventId(id: EventId): { value: string; kind: EventWatchRow['event_id_kind'] } {
+  if (typeof id === 'number') return { value: String(id), kind: 'number' };
+  return { value: id.slice('riot:'.length), kind: 'riot' };
+}
+
+function decodeEventId(value: string, kind: EventWatchRow['event_id_kind']): EventId {
+  return kind === 'riot' ? `riot:${value}` : Number(value);
+}
+
+function encodeTypedId(id: number | string | undefined): { value: string; kind: 'number' | 'string' } | null {
+  if (id === undefined) return null;
+  return typeof id === 'number'
+    ? { value: String(id), kind: 'number' }
+    : { value: id, kind: 'string' };
+}
+
+function decodeTypedId(
+  value: string | null,
+  kind: 'number' | 'string' | null,
+): number | string | null {
+  if (value === null || kind === null) return null;
+  return kind === 'number' ? Number(value) : value;
+}
+
 function rowToWatch(row: EventWatchRow): EventWatch {
+  const registrationId = decodeTypedId(row.registration_id, row.registration_id_kind);
+  const lastSeenRoundId = decodeTypedId(row.last_seen_round_id, row.last_seen_round_id_kind);
   return {
     telegramId: row.telegram_id,
     revision: row.revision,
-    eventId: row.event_id,
+    eventId: decodeEventId(row.event_id, row.event_id_kind),
     eventName: row.event_name,
     eventUsername: row.event_username,
+    ...(registrationId === null ? {} : { registrationId }),
     hasObservedPairing: row.has_observed_pairing === 1,
     lastSeenRound: row.last_seen_round,
+    lastSeenRoundId,
     lastSeenTable: row.last_seen_table,
     lastSeenOpponent: row.last_seen_opponent,
     lastSeenResult: row.last_seen_result as EventWatch['lastSeenResult'],
@@ -54,19 +88,26 @@ function rowToWatch(row: EventWatchRow): EventWatch {
   };
 }
 
+function encodeRoundId(roundId: RoundId | null | undefined): { value: string; kind: 'number' | 'string' } | null {
+  if (roundId === null || roundId === undefined) return null;
+  return typeof roundId === 'number'
+    ? { value: String(roundId), kind: 'number' }
+    : { value: roundId, kind: 'string' };
+}
+
 export class SqliteEventWatchRepository implements IEventWatchRepository {
   private readonly listStmt: Database.Statement<[], EventWatchRow>;
   private readonly getStmt: Database.Statement<[number], EventWatchRow>;
   private readonly createStmt: Database.Statement<
-    [number, string, number, string, string, string, string]
+    [number, string, string, string, string, string, string | null, string | null, string, string]
   >;
   private readonly replaceStmt: Database.Statement<
-    [string, number, string, string, string, string, number, string]
+    [string, string, string, string, string, string | null, string | null, string, string, number, string]
   >;
   private readonly deleteStmt: Database.Statement<[number]>;
   private readonly deleteIfCurrentStmt: Database.Statement<[number, string]>;
   private readonly recordSuccessStmt: Database.Statement<
-    [number | null, number | null, string | null, string | null, string, number, number, string, number, string]
+    [number | null, string | null, string | null, number | null, string | null, string | null, string, number, number, string, number, string]
   >;
   private readonly recordSuccessHealthStmt: Database.Statement<[string, number, string]>;
   private readonly recordFailureStmt: Database.Statement<[string, number, string]>;
@@ -81,16 +122,22 @@ export class SqliteEventWatchRepository implements IEventWatchRepository {
     );
     this.createStmt = db.prepare(
       `INSERT OR IGNORE INTO user_event_watches
-        (telegram_id, revision, event_id, event_name, event_username, created_at, updated_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        (telegram_id, revision, event_id, event_id_kind, event_name, event_username,
+         registration_id, registration_id_kind, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     this.replaceStmt = db.prepare(
       `UPDATE user_event_watches
        SET revision = ?,
            event_id = ?,
+           event_id_kind = ?,
            event_name = ?,
            event_username = ?,
+           registration_id = ?,
+           registration_id_kind = ?,
            last_seen_round = NULL,
+           last_seen_round_id = NULL,
+           last_seen_round_id_kind = NULL,
            last_seen_table = NULL,
            last_seen_opponent = NULL,
            last_seen_result = NULL,
@@ -111,6 +158,8 @@ export class SqliteEventWatchRepository implements IEventWatchRepository {
     this.recordSuccessStmt = db.prepare(
       `UPDATE user_event_watches
        SET last_seen_round = ?,
+           last_seen_round_id = ?,
+           last_seen_round_id_kind = ?,
            last_seen_table = ?,
            last_seen_opponent = ?,
            last_seen_result = ?,
@@ -153,12 +202,17 @@ export class SqliteEventWatchRepository implements IEventWatchRepository {
 
   async create(watch: EventWatchDraft): Promise<EventWatch | null> {
     const revision = newRevision();
+    const eventId = encodeEventId(watch.eventId);
+    const registrationId = encodeTypedId(watch.registrationId);
     const result = this.createStmt.run(
       watch.telegramId,
       revision,
-      watch.eventId,
+      eventId.value,
+      eventId.kind,
       watch.eventName,
       watch.eventUsername,
+      registrationId?.value ?? null,
+      registrationId?.kind ?? null,
       watch.createdAt,
       watch.createdAt,
     );
@@ -167,11 +221,16 @@ export class SqliteEventWatchRepository implements IEventWatchRepository {
 
   async replace(watch: EventWatchDraft, expectedRevision: string): Promise<EventWatch | null> {
     const revision = newRevision();
+    const eventId = encodeEventId(watch.eventId);
+    const registrationId = encodeTypedId(watch.registrationId);
     const result = this.replaceStmt.run(
       revision,
-      watch.eventId,
+      eventId.value,
+      eventId.kind,
       watch.eventName,
       watch.eventUsername,
+      registrationId?.value ?? null,
+      registrationId?.kind ?? null,
       watch.createdAt,
       watch.createdAt,
       watch.telegramId,
@@ -217,16 +276,20 @@ export class SqliteEventWatchRepository implements IEventWatchRepository {
     }
 
     const snapshot = observation.clearSnapshot === true
-      ? { round: null, table: null, opponent: null, result: null }
+      ? { round: null, roundId: null, table: null, opponent: null, result: null }
       : observation.snapshot ?? {
           round: null,
+          roundId: null,
           table: null,
           opponent: null,
           result: null,
         };
+    const roundId = encodeRoundId(snapshot.roundId);
     const changedAt = observation.changed ? observation.checkedAt : null;
     return this.recordSuccessStmt.run(
       snapshot.round,
+      roundId?.value ?? null,
+      roundId?.kind ?? null,
       snapshot.table,
       snapshot.opponent,
       snapshot.result,

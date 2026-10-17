@@ -26,10 +26,21 @@ A group of Cards released together as a single product. Defined at
 `SFD`, `VEN`). *Avoid*: "Expansion", "Release".
 
 **Event**:
-An upcoming Riftbound tournament at a physical store. Defined at
-`src/core/entities/event.ts`. Fetched from the official V2 events adapter;
-the bot's `/events` command renders a temporal window,
-and each individual event can be viewed as an **Event detail view**.
+A Riftbound tournament organized by a store. New events come from PlayRiftbound,
+Riot's official event platform. Older UVS Events retain their own identity.
+
+**Event watch**:
+A TelegramUser's subscription to one player's pairing and result changes in
+one Event. The watched player can be someone other than the TelegramUser.
+_Avoid_: My events, player account.
+
+**Mytable store**:
+The store that a TelegramUser selects for their own pairing lookup.
+This preference is independent of their Event watch.
+
+**Event reference**:
+An Event's provider and exact identifier. A Riot Event and a legacy UVS Event
+are distinct even when their identifiers contain the same digits.
 
 **Event detail view**:
 The message rendered in-place when a TelegramUser taps an inline button on
@@ -39,11 +50,8 @@ players fetched from a separate upstream endpoint. *Avoid*: "event page"
 (that's the upstream Locator URL).
 
 **Locator URL**:
-The canonical web URL for an Event,
-`https://locator.riftbound.uvsgames.com/events/<id>`, derived from the
-upstream numeric Event id. Surfaced in the Event detail view. *Avoid*:
-"event URL" (ambiguous with callback data), "share link" (Telegram term,
-overloaded with t.me links).
+The official web page for an Event on PlayRiftbound or the legacy UVS Locator.
+_Avoid_: Share link, callback data.
 
 **Signature**:
 A Card whose `cardType.superType` includes the `signature` supertype id
@@ -124,7 +132,7 @@ A Telegraf slash handler. Commands registered in
   the configured location.
 - `/events set` — share a location pin to save your own location.
 - `/events clear` — forget your saved location.
-- `/mytable [<username>]` — show a Nexus pairing, with `set`/`clear` flows.
+- `/mytable [<username>]` — show a Riot Event pairing at the selected Mytable store, with `set`/`clear` flows.
 - `/new` — show cards updated today in UTC.
 - `/admin` — list and stop active event watches for configured admins.
 

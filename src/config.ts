@@ -38,18 +38,13 @@ const configSchema = z.object({
   // 7 days. The lat/lon/radius here are the global default used
   // when a user has not configured their own location via
   // /events set. See ADR-0006.
+  playriftboundBaseUrl: z.literal('https://events.playriftbound.com').default('https://events.playriftbound.com'),
+  // Legacy endpoints retained for existing UVS watch references only.
   riftboundV2BaseUrl: z.string().url().default('https://api.riftbound.uvsgames.com/api/v2'),
-  riftfoundBaseUrl: z.string().url().default('https://www.riftfound.com/api'),
   eventsLatitude: z.coerce.number().min(-90).max(90).default(37.39),
   eventsLongitude: z.coerce.number().min(-180).max(180).default(-5.99),
   eventsRadiusKm: z.coerce.number().positive().default(80), // 50 miles
   eventsDaysAhead: z.coerce.number().int().positive().default(7),
-
-  // Nexus Table (player pairing tracker). URL defaults to the
-  // Netlify-hosted function the Android app uses. Token is optional:
-  // the endpoint may be public for read calls.
-  nexusTableApiUrl: z.string().url().default('https://riftboundtoolkit.netlify.app/.netlify/functions/nexus-table'),
-  nexusTableApiToken: z.string().optional(),
 
   // Admin Telegram IDs — comma-separated. Users in this list can
   // use the /admin command. Empty = no admin access.
@@ -95,14 +90,12 @@ export function loadConfig(): Config {
     webhookUrl: process.env['WEBHOOK_URL'],
     apiTimeoutMs: process.env['API_TIMEOUT_MS'],
     apiRetryAttempts: process.env['API_RETRY_ATTEMPTS'],
+    playriftboundBaseUrl: process.env['PLAYRIFTBOUND_BASE_URL'],
     riftboundV2BaseUrl: process.env['RIFTBOUND_V2_BASE_URL'],
-    riftfoundBaseUrl: process.env['RIFTFOUND_BASE_URL'],
     eventsLatitude: process.env['EVENTS_LATITUDE'],
     eventsLongitude: process.env['EVENTS_LONGITUDE'],
     eventsRadiusKm: process.env['EVENTS_RADIUS_KM'],
     eventsDaysAhead: process.env['EVENTS_DAYS_AHEAD'],
-    nexusTableApiUrl: process.env['NEXUS_TABLE_API_URL'],
-    nexusTableApiToken: process.env['NEXUS_TABLE_API_TOKEN'],
     nexusWatcherEnabled: process.env['NEXUS_WATCHER_ENABLED'],
     nexusWatcherIntervalMs: process.env['NEXUS_WATCHER_INTERVAL_MS'],
     adminTelegramIds: process.env['ADMIN_TELEGRAM_IDS'],

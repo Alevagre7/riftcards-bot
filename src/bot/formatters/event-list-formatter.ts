@@ -1,4 +1,5 @@
 import { EventListing } from '../../core/entities/event-listing.js';
+import { encodeEventId } from '../utils/event-callback-codec.js';
 
 const tz = 'Europe/Madrid';
 
@@ -56,7 +57,7 @@ function makeButton(event: EventListing): EventListButton {
   // Mark list-origin callbacks separately from detail/back-navigation
   // callbacks. This lets the action handler clear a stale direct-fetch
   // marker when the same event is later opened from a real list.
-  return { label, callbackData: `event:list:${event.id}` };
+  return { label, callbackData: `event:list:${encodeEventId(event.id)}` };
 }
 
 // ---------------------------------------------------------------------------

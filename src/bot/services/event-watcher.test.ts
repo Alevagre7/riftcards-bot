@@ -7,6 +7,7 @@ import { Event } from '../../core/entities/event.js';
 import { EventRegistration } from '../../core/entities/event-registration.js';
 import { ApiResponseError } from '../../core/errors/index.js';
 import type { EventWatch } from '../../core/entities/event-watch.js';
+import { createEventWatchManager } from './event-watch-manager.js';
 
 function mockWatchRepository(): IEventWatchRepository {
   return {
@@ -183,7 +184,7 @@ describe('createEventWatcher', () => {
     expect(watchRepository.recordObservation).toHaveBeenCalledWith(1, 'revision-1', expect.objectContaining({
       kind: 'success',
       changed: true,
-      snapshot: { round: 1, table: 5, opponent: 'Bob', result: null },
+      snapshot: { round: 1, roundId: 1, table: 5, opponent: 'Bob', result: null },
     }));
   });
 
@@ -248,6 +249,39 @@ describe('createEventWatcher', () => {
     expect(watchRepository.deleteIfCurrent).not.toHaveBeenCalled();
   });
 
+  it('records provider contract errors as failures and keeps the watch degraded', async () => {
+    const watchRepository = mockWatchRepository();
+    let watch = makeWatch();
+    watchRepository.list = vi.fn().mockImplementation(async () => [watch]);
+    watchRepository.get = vi.fn().mockImplementation(async () => watch);
+    watchRepository.recordObservation = vi.fn().mockImplementation(async (_id, _revision, observation) => {
+      if (observation.kind === 'transient-failure') {
+        watch = { ...watch, consecutiveFailures: watch.consecutiveFailures + 1 };
+      }
+      return true;
+    });
+    const eventRepository = mockEventRepository();
+    eventRepository.getEventDetail = vi.fn().mockRejectedValue(new ApiResponseError('Riot events API', 422));
+    const notify = vi.fn().mockResolvedValue(undefined);
+    const deps = makeDeps({ watchRepository, eventRepository, notify });
+    const watcher = createEventWatcher(deps);
+
+    await watcher.tick();
+    await watcher.tick();
+    await watcher.tick();
+
+    expect(watchRepository.recordObservation).toHaveBeenCalledTimes(3);
+    expect(watchRepository.recordObservation).toHaveBeenCalledWith(1, 'revision-1', expect.objectContaining({ kind: 'transient-failure' }));
+    expect(watchRepository.deleteIfCurrent).not.toHaveBeenCalled();
+    expect(notify).not.toHaveBeenCalled();
+    const manager = createEventWatchManager({
+      watchRepository,
+      eventRepository,
+      defaultLocation: deps.defaultLocation,
+    });
+    expect((await manager.getStatus(1))?.kind).toBe('degraded');
+  });
+
   it('ends completed events and does not expose a stop action on the terminal notice', async () => {
     const watchRepository = mockWatchRepository();
     const watch = makeWatch();
@@ -266,6 +300,172 @@ describe('createEventWatcher', () => {
     expect(watchRepository.deleteIfCurrent).toHaveBeenCalledWith(1, 'revision-1');
   });
 
+  it('delivers a final result before the completed-event notice and watch deletion', async () => {
+    const watchRepository = mockWatchRepository();
+    const watch = makeWatch({
+      hasObservedPairing: true,
+      lastSeenRound: 2,
+      lastSeenTable: 1,
+      lastSeenOpponent: 'Bob',
+    });
+    watchRepository.list = vi.fn().mockResolvedValue([watch]);
+    watchRepository.get = vi.fn().mockResolvedValue(watch);
+    const eventRepository = mockEventRepository();
+    eventRepository.getEventDetail = vi.fn().mockResolvedValue(
+      makeDetail({
+        event: makeEvent({ displayStatus: 'complete', eventStatus: 'COMPLETE' }),
+        registrations: [],
+        pairings: [makePairing({
+          status: 'IN_PROGRESS',
+          outcome: 'win',
+          winner: 'Alice',
+          score1: 2,
+          score2: 1,
+        })],
+      }),
+    );
+    const notify = vi.fn().mockResolvedValue(undefined);
+
+    await createEventWatcher(makeDeps({ watchRepository, eventRepository, notify })).tick();
+
+    expect(notify).toHaveBeenCalledTimes(2);
+    expect(notify.mock.calls[0]![1].body).toContain('Round 2 result: Win vs Bob');
+    expect(notify.mock.calls[0]![1].canStop).toBe(true);
+    expect(notify.mock.calls[1]![1].body).toContain('event is complete');
+    expect(notify.mock.calls[1]![1].canStop).toBe(false);
+    expect(watchRepository.deleteIfCurrent).toHaveBeenCalledWith(1, 'revision-1');
+  });
+
+  it('delivers a final result before the dropped-player notice', async () => {
+    const watchRepository = mockWatchRepository();
+    const watch = makeWatch({
+      hasObservedPairing: true,
+      lastSeenRound: 2,
+      lastSeenTable: 1,
+      lastSeenOpponent: 'Bob',
+    });
+    watchRepository.list = vi.fn().mockResolvedValue([watch]);
+    watchRepository.get = vi.fn().mockResolvedValue(watch);
+    const eventRepository = mockEventRepository();
+    eventRepository.getEventDetail = vi.fn().mockResolvedValue(
+      makeDetail({
+        registrations: [makeRegistration({ status: 'Dropped' })],
+        pairings: [makePairing({ status: 'IN_PROGRESS', outcome: 'win', winner: 'Alice' })],
+      }),
+    );
+    const notify = vi.fn().mockResolvedValue(undefined);
+
+    await createEventWatcher(makeDeps({ watchRepository, eventRepository, notify })).tick();
+
+    expect(notify).toHaveBeenCalledTimes(2);
+    expect(notify.mock.calls[0]![1].body).toContain('Round 2 result: Win vs Bob');
+    expect(notify.mock.calls[1]![1].body).toContain('no longer active');
+  });
+
+  it('retains the watch and snapshot when final-result delivery fails', async () => {
+    const watchRepository = mockWatchRepository();
+    const watch = makeWatch({
+      hasObservedPairing: true,
+      lastSeenRound: 2,
+      lastSeenTable: 1,
+      lastSeenOpponent: 'Bob',
+    });
+    watchRepository.list = vi.fn().mockResolvedValue([watch]);
+    watchRepository.get = vi.fn().mockResolvedValue(watch);
+    const eventRepository = mockEventRepository();
+    eventRepository.getEventDetail = vi.fn().mockResolvedValue(
+      makeDetail({
+        event: makeEvent({ displayStatus: 'complete', eventStatus: 'COMPLETE' }),
+        pairings: [makePairing({ status: 'IN_PROGRESS', outcome: 'win', winner: 'Alice' })],
+      }),
+    );
+    const notify = vi.fn().mockRejectedValue(new Error('Telegram temporarily unavailable'));
+
+    await createEventWatcher(makeDeps({ watchRepository, eventRepository, notify })).tick();
+
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(notify.mock.calls[0]![1].body).toContain('Round 2 result: Win vs Bob');
+    expect(watchRepository.recordObservation).not.toHaveBeenCalled();
+    expect(watchRepository.deleteIfCurrent).not.toHaveBeenCalled();
+  });
+
+  it('uses registration IDs when duplicate display names appear in pairings', async () => {
+    const watchRepository = mockWatchRepository();
+    const watch = makeWatch({ registrationId: 'player-2' });
+    watchRepository.list = vi.fn().mockResolvedValue([watch]);
+    watchRepository.get = vi.fn().mockResolvedValue(watch);
+    const eventRepository = mockEventRepository();
+    eventRepository.getEventDetail = vi.fn().mockResolvedValue(
+      makeDetail({
+        registrations: [makeRegistration({ id: 'player-2', name: 'Alice' })],
+        pairings: [
+          makePairing({ player1: 'Alice', player1Id: 'player-1', player2: 'Bob', tableNumber: 1 }),
+          makePairing({ player1: 'Alice', player1Id: 'player-2', player2: 'Charlie', tableNumber: 2 }),
+        ],
+      }),
+    );
+    const notify = vi.fn().mockResolvedValue(undefined);
+
+    await createEventWatcher(makeDeps({ watchRepository, eventRepository, notify })).tick();
+
+    expect(notify).toHaveBeenCalledTimes(1);
+    expect(notify.mock.calls[0]![1].body).toContain('You vs Charlie');
+    expect(watchRepository.recordObservation).toHaveBeenCalledWith(1, 'revision-1', expect.objectContaining({
+      snapshot: expect.objectContaining({ opponent: 'Charlie' }),
+    }));
+  });
+
+  it('does not select a legacy watch when duplicate names make the pairing ambiguous', async () => {
+    const watchRepository = mockWatchRepository();
+    const watch = makeWatch();
+    watchRepository.list = vi.fn().mockResolvedValue([watch]);
+    watchRepository.get = vi.fn().mockResolvedValue(watch);
+    const eventRepository = mockEventRepository();
+    eventRepository.getEventDetail = vi.fn().mockResolvedValue(
+      makeDetail({
+        registrations: [
+          makeRegistration({ id: 1, status: 'Active' }),
+          makeRegistration({ id: 2, status: 'Dropped' }),
+        ],
+        pairings: [
+          makePairing({ player1: 'Alice', player2: 'Bob', tableNumber: 1 }),
+          makePairing({ player1: 'Charlie', player2: 'Alice', tableNumber: 2 }),
+        ],
+      }),
+    );
+    const notify = vi.fn().mockResolvedValue(undefined);
+
+    await createEventWatcher(makeDeps({ watchRepository, eventRepository, notify })).tick();
+
+    expect(notify).not.toHaveBeenCalled();
+    expect(watchRepository.deleteIfCurrent).not.toHaveBeenCalled();
+    expect(watchRepository.recordObservation).toHaveBeenCalledWith(1, 'revision-1', expect.objectContaining({
+      kind: 'success',
+      changed: false,
+    }));
+  });
+
+  it('does not report an unattributed loss from partial result data', async () => {
+    const watchRepository = mockWatchRepository();
+    const watch = makeWatch({
+      hasObservedPairing: true,
+      lastSeenRound: 2,
+      lastSeenTable: 1,
+      lastSeenOpponent: 'Bob',
+    });
+    watchRepository.list = vi.fn().mockResolvedValue([watch]);
+    watchRepository.get = vi.fn().mockResolvedValue(watch);
+    const eventRepository = mockEventRepository();
+    eventRepository.getEventDetail = vi.fn().mockResolvedValue(
+      makeDetail({ pairings: [makePairing({ status: 'COMPLETE', outcome: 'loss', winner: null })] }),
+    );
+    const notify = vi.fn().mockResolvedValue(undefined);
+
+    await createEventWatcher(makeDeps({ watchRepository, eventRepository, notify })).tick();
+
+    expect(notify).not.toHaveBeenCalled();
+  });
+
   it('ends a watch when the selected player is dropped', async () => {
     const watchRepository = mockWatchRepository();
     const watch = makeWatch();
@@ -279,6 +479,29 @@ describe('createEventWatcher', () => {
 
     await createEventWatcher(makeDeps({ watchRepository, eventRepository, notify })).tick();
 
+    expect(notify.mock.calls[0]![1].body).toContain('no longer active');
+    expect(watchRepository.deleteIfCurrent).toHaveBeenCalledWith(1, 'revision-1');
+  });
+
+  it('uses registration IDs to detect a dropped player among duplicate names', async () => {
+    const watchRepository = mockWatchRepository();
+    const watch = makeWatch({ registrationId: 'player-2' });
+    watchRepository.list = vi.fn().mockResolvedValue([watch]);
+    watchRepository.get = vi.fn().mockResolvedValue(watch);
+    const eventRepository = mockEventRepository();
+    eventRepository.getEventDetail = vi.fn().mockResolvedValue(
+      makeDetail({
+        registrations: [
+          makeRegistration({ id: 'player-1', name: 'Alice', status: 'Active' }),
+          makeRegistration({ id: 'player-2', name: 'Alice', status: 'Dropped' }),
+        ],
+      }),
+    );
+    const notify = vi.fn().mockResolvedValue(undefined);
+
+    await createEventWatcher(makeDeps({ watchRepository, eventRepository, notify })).tick();
+
+    expect(notify).toHaveBeenCalledTimes(1);
     expect(notify.mock.calls[0]![1].body).toContain('no longer active');
     expect(watchRepository.deleteIfCurrent).toHaveBeenCalledWith(1, 'revision-1');
   });

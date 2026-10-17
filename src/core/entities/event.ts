@@ -1,24 +1,23 @@
-// Event — a Riftbound tournament event as served by the official
-// Riftbound V2 API (https://api.riftbound.uvsgames.com/api/v2).
+// Event — a Riftbound tournament event in the bot's domain model.
 //
-// The field names mirror the V2 wire format (snake_case → camelCase)
-// so the adapter mapper is a straight rename and every consumer reads
-// the same names the upstream sends. `tournamentPhases` is only
-// populated by the detail endpoints; list responses carry it empty.
+// Provider-specific fields are translated by adapters. `tournamentPhases`
+// is populated by detail responses; list responses carry it empty.
+
+import type { EventId, RoundId } from './event-id.js';
 
 export interface Event {
-  readonly id: number;
+  readonly id: EventId;
   readonly name: string;
   readonly displayStatus: 'upcoming' | 'inProgress' | 'complete';
   readonly eventStatus: 'SCHEDULED' | 'IN_PROGRESS' | 'COMPLETE' | 'CANCELLED' | string;
   readonly startDatetime: string;   // ISO with offset (e.g. 2026-07-31T15:00:00+00:00)
-  readonly endDatetime: string;
+  readonly endDatetime?: string | null;
   readonly timezone: string;        // IANA tz, e.g. "Europe/Madrid"
   readonly capacity: number;
   readonly registeredCount: number;
   readonly startingPlayerCount: number;
   readonly store: {
-    readonly id: number;
+    readonly id: number | string;
     readonly name: string;
     readonly fullAddress: string;
     readonly latitude: number;
@@ -37,10 +36,14 @@ export interface Event {
   readonly isOnDemand: boolean;
   readonly isTestEvent: boolean;
   readonly tournamentPhases: readonly EventPhaseSummary[];
+  /** Canonical provider event page, when the provider exposes one. */
+  readonly locatorUrl?: string;
+  /** Whether the event has a supported 1v1 player-watch contract. */
+  readonly supportsTracking?: boolean;
 }
 
 export interface EventPhaseSummary {
-  readonly id: number;
+  readonly id: number | string;
   readonly status: 'UPCOMING' | 'IN_PROGRESS' | 'COMPLETE' | string;
   readonly orderInPhases: number;
   readonly phaseName: string;
@@ -48,7 +51,7 @@ export interface EventPhaseSummary {
 }
 
 export interface EventRoundSummary {
-  readonly id: number;
+  readonly id: RoundId;
   readonly roundNumber: number;
   readonly status: 'UPCOMING' | 'PENDING' | 'IN_PROGRESS' | 'COMPLETE' | string;
   readonly pairingsStatus: string | null;

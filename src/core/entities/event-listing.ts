@@ -1,3 +1,5 @@
+import type { EventId } from './event-id.js';
+
 export type EventMode = 'Skirmish' | 'Nexus Night' | 'Pre-Rift' | 'Other';
 
 export function normalizeEventMode(value: string): EventMode {
@@ -9,10 +11,10 @@ export function normalizeEventMode(value: string): EventMode {
 }
 
 export interface EventListing {
-  readonly id: number;
+  readonly id: EventId;
   readonly name: string;
   readonly startDatetime: string;
-  readonly endDatetime: string;
+  readonly endDatetime?: string | null;
   /** IANA timezone supplied by the listing provider, when available. */
   readonly timezone?: string;
   readonly mode: EventMode;

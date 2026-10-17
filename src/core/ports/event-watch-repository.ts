@@ -1,15 +1,19 @@
 import { EventWatch } from '../entities/event-watch.js';
+import type { EventId, RoundId } from '../entities/event-id.js';
 
 export interface EventWatchDraft {
   readonly telegramId: number;
-  readonly eventId: number;
+  readonly eventId: EventId;
   readonly eventName: string;
   readonly eventUsername: string;
+  /** Stable registration identity; absent on legacy name-only watches. */
+  readonly registrationId?: number | string;
   readonly createdAt: string;
 }
 
 export interface EventWatchSnapshot {
   readonly round: number | null;
+  readonly roundId?: RoundId | null;
   readonly table: number | null;
   readonly opponent: string | null;
   readonly result: 'win' | 'loss' | 'draw' | 'bye' | null;

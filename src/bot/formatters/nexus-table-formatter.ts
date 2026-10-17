@@ -1,27 +1,36 @@
 import { NexusTable } from '../../core/entities/nexus-table.js';
 import { escapeHtml } from './card-formatter.js';
 
-const tz = 'Europe/Madrid';
-
-const dateFmt = new Intl.DateTimeFormat('en-GB', {
-  weekday: 'short',
-  month: 'short',
-  day: 'numeric',
-  timeZone: tz,
-});
+function formatEventDate(date: Date, timezone?: string): string {
+  try {
+    return new Intl.DateTimeFormat('en-GB', {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+      timeZone: timezone ?? 'UTC',
+    }).format(date);
+  } catch {
+    return new Intl.DateTimeFormat('en-GB', {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+      timeZone: 'UTC',
+    }).format(date);
+  }
+}
 
 export function formatNexusTable(table: NexusTable): string {
   const lines: string[] = [];
   const username = escapeHtml(table.username);
 
   // Header
-  lines.push(`<b>Nexus Table \u2014 ${username}</b>`);
+  lines.push(`<b>My table \u2014 ${username}</b>`);
 
   // Empty state: no active pairing
   if (table.event === null && table.round === null && table.opponent === null) {
     lines.push('');
     lines.push(
-      `No active pairing for ${username}. Try again once the current round is paired.`,
+      `No table found for ${username} at your selected store today.`,
     );
     return lines.join('\n');
   }
@@ -30,7 +39,7 @@ export function formatNexusTable(table: NexusTable): string {
   if (table.event !== null) {
     const eventName = escapeHtml(table.event.name);
     const storeName = escapeHtml(table.event.store.name);
-    const eventDate = dateFmt.format(table.event.startDate);
+    const eventDate = formatEventDate(table.event.startDate, table.event.store.timezone);
     lines.push('');
     lines.push(`${eventName} \u00B7 ${storeName} \u00B7 ${eventDate}`);
   }
@@ -55,6 +64,11 @@ export function formatNexusTable(table: NexusTable): string {
     if (table.opponent.score !== null) {
       lines.push(`Opponent Score: ${table.opponent.score}`);
     }
+  }
+
+  if (table.round?.result != null) {
+    const result = { win: 'Win', loss: 'Loss', draw: 'Draw', bye: 'Bye' }[table.round.result];
+    lines.push(`Result: ${result}`);
   }
 
   // Record block
@@ -82,7 +96,10 @@ export function formatNexusTable(table: NexusTable): string {
   if (table.event !== null) {
     lines.push('');
     lines.push(
-      `Locator: https://locator.riftbound.uvsgames.com/events/${escapeHtml(table.event.id)}`,
+      `PlayRiftbound: ${escapeHtml(
+        table.event.locatorUrl ??
+          `https://events.playriftbound.com/en-US/events/${encodeURIComponent(table.event.id.replace(/^riot:/, ''))}`,
+      )}`,
     );
   }
 

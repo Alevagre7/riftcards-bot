@@ -4,6 +4,7 @@
 
 import { EventWatch } from '../../core/entities/event-watch.js';
 import { EventPairing } from '../../core/entities/event-detail.js';
+import type { RoundId } from '../../core/entities/event-id.js';
 
 export type ChangeReason =
   | 'first-pairing'
@@ -23,6 +24,7 @@ export function detectPairingChange(
   prev: Pick<
     EventWatch,
     | 'lastSeenRound'
+    | 'lastSeenRoundId'
     | 'lastSeenTable'
     | 'lastSeenOpponent'
     | 'lastSeenResult'
@@ -31,6 +33,8 @@ export function detectPairingChange(
   next: EventPairing,
   currentRound: number | null,
   username: string,
+  currentRoundId?: RoundId | null,
+  registrationId?: number | string,
 ): PairingDiff {
   const reasons: ChangeReason[] = [];
 
@@ -44,11 +48,11 @@ export function detectPairingChange(
   }
 
   // round-changed: prev had a different round number.
-  if (
-    prev.lastSeenRound !== null &&
-    currentRound !== null &&
-    prev.lastSeenRound !== currentRound
-  ) {
+  const roundChanged = prev.lastSeenRoundId != null && currentRoundId != null
+    ? prev.lastSeenRoundId !== currentRoundId
+    : prev.lastSeenRound !== null && currentRound !== null && prev.lastSeenRound !== currentRound;
+
+  if ((prev.lastSeenRound !== null || prev.lastSeenRoundId != null) && currentRound !== null && roundChanged) {
     reasons.push('round-changed');
   }
 
@@ -73,7 +77,7 @@ export function detectPairingChange(
     reasons.push('opponent-changed');
   }
 
-  const nextResult = pairingToResult(next, username);
+  const nextResult = pairingToResult(next, username, registrationId);
 
   // result-submitted: prev null, now a known result.
   if (prev.lastSeenResult === null && nextResult !== null) {
@@ -102,22 +106,69 @@ export function detectPairingChange(
 export function pairingToResult(
   pairing: EventPairing,
   username: string,
+  registrationId?: number | string,
 ): 'win' | 'loss' | 'draw' | 'bye' | null {
-  if (pairing.player1 !== username && pairing.player2 !== username) return null;
+  const side = watchedSide(pairing, username, registrationId);
+  if (side === null) return null;
   switch (pairing.outcome) {
     case 'bye':
       return 'bye';
     case 'draw':
       return 'draw';
     case 'win':
+      if (pairing.winnerId != null && pairing.player1Id != null && pairing.player2Id != null) {
+        const watchedId = side === 'player1' ? pairing.player1Id : pairing.player2Id;
+        return pairing.winnerId === watchedId ? 'win' : 'loss';
+      }
+      if (registrationId !== undefined && (pairing.player1Id != null || pairing.player2Id != null)) {
+        // The watched identity is stable but the winner identity is not. A
+        // display name cannot safely disambiguate duplicate names here.
+        return null;
+      }
       if (pairing.winner === username) return 'win';
       if (pairing.winner === pairing.player1 || pairing.winner === pairing.player2) return 'loss';
       return null;
     case 'loss':
-      return 'loss';
+      // A provider's generic loss marker does not say which participant
+      // lost. Require a winner identity before telling either player they
+      // lost.
+      return null;
     case 'pending':
     case 'conflict':
     case 'unavailable':
       return null;
   }
+}
+
+type PlayerSide = 'player1' | 'player2';
+
+function watchedSide(
+  pairing: EventPairing,
+  username: string,
+  registrationId?: number | string,
+): PlayerSide | null {
+  if (registrationId !== undefined) {
+    const id = String(registrationId);
+    const isPlayer1 = pairing.player1Id === id;
+    const isPlayer2 = pairing.player2Id === id;
+    if (isPlayer1 === isPlayer2) return null;
+    return isPlayer1 ? 'player1' : 'player2';
+  }
+
+  const isPlayer1 = pairing.player1 === username;
+  const isPlayer2 = pairing.player2 === username;
+  if (isPlayer1 === isPlayer2) return null;
+  return isPlayer1 ? 'player1' : 'player2';
+}
+
+/** Match a watch to exactly one pairing by stable ID, or by a unique legacy
+ * name match when the watch predates registration IDs. */
+export function findPairingForWatch(
+  pairings: readonly EventPairing[],
+  watch: Pick<EventWatch, 'eventUsername' | 'registrationId'>,
+): EventPairing | null {
+  const matches = pairings.filter(
+    (pairing) => watchedSide(pairing, watch.eventUsername, watch.registrationId) !== null,
+  );
+  return matches.length === 1 ? matches[0] ?? null : null;
 }

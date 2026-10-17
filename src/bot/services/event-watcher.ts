@@ -8,14 +8,19 @@
 import { IEventWatchRepository } from '../../core/ports/event-watch-repository.js';
 import { IEventRepository, EventLocation } from '../../core/ports/event-repository.js';
 import { EventDetail, EventPairing } from '../../core/entities/event-detail.js';
-import { ApiResponseError, ApiTimeoutError } from '../../core/errors/index.js';
-import { detectPairingChange, pairingToResult, ChangeReason } from './event-watcher-diff.js';
+import type { EventId, RoundId } from '../../core/entities/event-id.js';
+import {
+  detectPairingChange,
+  findPairingForWatch,
+  pairingToResult,
+  ChangeReason,
+} from './event-watcher-diff.js';
 
 const MAX_MISSING_POLLS = 3;
 
 export interface WatchNotification {
   readonly body: string;
-  readonly eventId: number;
+  readonly eventId: EventId;
   readonly revision: string;
   readonly canStop: boolean;
 }
@@ -38,13 +43,20 @@ export interface EventWatcher {
   tick(): Promise<void>;
 }
 
-function getOpponent(pairing: { player1: string; player2: string }, username: string): string {
-  const opponent = pairing.player1 === username ? pairing.player2 : pairing.player1;
+function getOpponent(
+  pairing: EventPairing,
+  username: string,
+  registrationId?: number | string,
+): string {
+  const isPlayer1 = registrationId !== undefined
+    ? pairing.player1Id === String(registrationId)
+    : pairing.player1 === username;
+  const opponent = isPlayer1 ? pairing.player2 : pairing.player1;
   return opponent || 'Bye';
 }
 
-function formatResult(pairing: EventPairing, username: string): string {
-  switch (pairingToResult(pairing, username)) {
+function formatResult(pairing: EventPairing, username: string, registrationId?: number | string): string {
+  switch (pairingToResult(pairing, username, registrationId)) {
     case 'win': return 'Win';
     case 'loss': return 'Loss';
     case 'draw': return 'Draw';
@@ -59,8 +71,9 @@ function buildNotifyBody(
   reasons: readonly ChangeReason[],
   pairing: EventPairing,
   round: number | null,
+  registrationId?: number | string,
 ): string {
-  const opponent = getOpponent(pairing, username);
+  const opponent = getOpponent(pairing, username, registrationId);
   const lines = [`📡 ${eventName} — ${username}`];
   const hasRoundChange = reasons.some(
     (reason) => reason === 'first-pairing' || reason === 'new-round' || reason === 'round-changed',
@@ -86,7 +99,7 @@ function buildNotifyBody(
   }
   if (hasResultChange) {
     lines.push(
-      `📝 Round ${round} result: ${formatResult(pairing, username)} vs ${opponent}`,
+      `📝 Round ${round} result: ${formatResult(pairing, username, registrationId)} vs ${opponent}`,
     );
   }
 
@@ -107,15 +120,22 @@ function buildEndedBody(
   return `🛑 Watching ${username} at ${eventName} ended — ${suffix}.`;
 }
 
-function isTransient(error: unknown): boolean {
-  return error instanceof ApiTimeoutError ||
-    (error instanceof ApiResponseError && /5\d{2}/.test(error.message));
-}
-
 function isBlocked(error: unknown): boolean {
   const err = error as Record<string, unknown>;
   const response = err.response as Record<string, unknown> | undefined;
   return response?.error_code === 403;
+}
+
+function findRegistrationForWatch(
+  registrations: EventDetail['registrations'],
+  watch: Awaited<ReturnType<IEventWatchRepository['list']>>[number],
+): EventDetail['registrations'][number] | null {
+  const matches = watch.registrationId !== undefined
+    ? registrations.filter((entry) =>
+        typeof entry.id === typeof watch.registrationId && String(entry.id) === String(watch.registrationId),
+      )
+    : registrations.filter((entry) => entry.name === watch.eventUsername);
+  return matches.length === 1 ? matches[0] ?? null : null;
 }
 
 export function createEventWatcher(deps: EventWatcherDeps): EventWatcher {
@@ -154,7 +174,7 @@ export function createEventWatcher(deps: EventWatcherDeps): EventWatcher {
 
     log(`[event-watcher] tick — ${watches.length} watch(es)`);
 
-    const byEvent = new Map<number, typeof watches>();
+    const byEvent = new Map<EventId, typeof watches>();
     for (const watch of watches) {
       const existing = byEvent.get(watch.eventId);
       if (existing) existing.push(watch);
@@ -173,20 +193,17 @@ export function createEventWatcher(deps: EventWatcherDeps): EventWatcher {
             { fresh: true },
           );
         } catch (error: unknown) {
-          if (isTransient(error)) {
-            log(`[event-watcher] transient error for event ${eventId}, will retry`, {
-              error: (error as Error).message,
+          log(`[event-watcher] provider error for event ${eventId}; retaining watch`, {
+            error: String(error),
+          });
+          const checkedAt = now().toISOString();
+          for (const watch of eventWatches) {
+            await deps.watchRepository.recordObservation(watch.telegramId, watch.revision, {
+              kind: 'transient-failure',
+              checkedAt,
             });
-            const checkedAt = now().toISOString();
-            for (const watch of eventWatches) {
-              await deps.watchRepository.recordObservation(watch.telegramId, watch.revision, {
-                kind: 'transient-failure',
-                checkedAt,
-              });
-            }
-            return;
           }
-          throw error;
+          return;
         }
 
         if (data === null) {
@@ -214,13 +231,6 @@ export function createEventWatcher(deps: EventWatcherDeps): EventWatcher {
 
         for (const watch of eventWatches) {
           try {
-            if (data.event.displayStatus === 'complete') {
-              await notifyAndDelete(
-                watch,
-                buildEndedBody(watch.eventName, watch.eventUsername, 'complete'),
-              );
-              continue;
-            }
             if (data.event.eventStatus === 'CANCELLED') {
               await notifyAndDelete(
                 watch,
@@ -229,18 +239,27 @@ export function createEventWatcher(deps: EventWatcherDeps): EventWatcher {
               continue;
             }
 
-            const registration = data.registrations.find(
-              (entry) => entry.name === watch.eventUsername,
-            );
-            if (registration && registration.status !== 'Active') {
+            // Process known pairings and final results before ending a
+            // completed or dropped watch. A delivery failure leaves the
+            // watch active so the next tick can retry the final result.
+            await processWatch(watch, data);
+
+            if (data.event.eventStatus === 'COMPLETE') {
+              await notifyAndDelete(
+                watch,
+                buildEndedBody(watch.eventName, watch.eventUsername, 'complete'),
+              );
+              continue;
+            }
+
+            const registration = findRegistrationForWatch(data.registrations, watch);
+            if (registration?.status === 'Dropped') {
               await notifyAndDelete(
                 watch,
                 buildEndedBody(watch.eventName, watch.eventUsername, 'dropped'),
               );
               continue;
             }
-
-            await processWatch(watch, data);
           } catch (error: unknown) {
             log(`[event-watcher] error processing watch ${watch.telegramId}`, {
               error: String(error),
@@ -265,10 +284,11 @@ export function createEventWatcher(deps: EventWatcherDeps): EventWatcher {
   ): Promise<void> {
     const checkedAt = now().toISOString();
     const currentRoundNumber = data.currentRound?.roundNumber ?? null;
+    const currentRoundId: RoundId | null = data.currentRound?.id ?? null;
 
     // Preserve hasObservedPairing while clearing only the current pairing
     // during the gap between rounds.
-    if (watch.lastSeenRound !== null && currentRoundNumber === null) {
+    if ((watch.lastSeenRound !== null || watch.lastSeenRoundId != null) && currentRoundId === null) {
       await deps.watchRepository.recordObservation(watch.telegramId, watch.revision, {
         kind: 'success',
         checkedAt,
@@ -278,9 +298,7 @@ export function createEventWatcher(deps: EventWatcherDeps): EventWatcher {
       return;
     }
 
-    const pairing = data.pairings.find(
-      (candidate) => candidate.player1 === watch.eventUsername || candidate.player2 === watch.eventUsername,
-    );
+    const pairing = findPairingForWatch(data.pairings, watch);
 
     if (!pairing) {
       await deps.watchRepository.recordObservation(watch.telegramId, watch.revision, {
@@ -291,11 +309,16 @@ export function createEventWatcher(deps: EventWatcherDeps): EventWatcher {
       return;
     }
 
+    const matchingRegistration = findRegistrationForWatch(data.registrations, watch);
+    const displayUsername = matchingRegistration?.name ?? watch.eventUsername;
+
     const diff = detectPairingChange(
       watch,
       pairing,
       currentRoundNumber,
-      watch.eventUsername,
+      displayUsername,
+      currentRoundId,
+      watch.registrationId,
     );
 
     if (diff.changed) {
@@ -305,10 +328,11 @@ export function createEventWatcher(deps: EventWatcherDeps): EventWatcher {
         await deps.notify(watch.telegramId, {
           body: buildNotifyBody(
             watch.eventName,
-            watch.eventUsername,
+            displayUsername,
             diff.reasons,
             pairing,
             currentRoundNumber,
+            watch.registrationId,
           ),
           eventId: watch.eventId,
           revision: watch.revision,
@@ -322,16 +346,17 @@ export function createEventWatcher(deps: EventWatcherDeps): EventWatcher {
         throw notifyError;
       }
 
-      const opponent = getOpponent(pairing, watch.eventUsername);
+      const opponent = getOpponent(pairing, watch.eventUsername, watch.registrationId);
       await deps.watchRepository.recordObservation(watch.telegramId, watch.revision, {
         kind: 'success',
         checkedAt,
         changed: true,
         snapshot: {
           round: currentRoundNumber,
+          roundId: currentRoundId,
           table: pairing.tableNumber,
           opponent,
-          result: pairingToResult(pairing, watch.eventUsername),
+          result: pairingToResult(pairing, displayUsername, watch.registrationId),
         },
       });
       return;
