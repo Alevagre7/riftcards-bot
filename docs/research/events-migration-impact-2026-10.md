@@ -695,3 +695,25 @@ Se comprobó una alternativa con la API Riot: búsqueda geográfica junto a una 
 Implementación necesaria: añadir una preferencia de tienda/organizador y de jugador de consulta independiente de Watch; permitir la selección inicial explícita; conservar `set`, `clear`, consulta guardada y puntual; desambiguar varios eventos/jugadores; corregir el parser; probar fechas en la zona de la tienda, eventos completados/activos y ausencia de pairing. Esta configuración inicial repara el contexto que el bot no guardaba; no es una sustitución silenciosa por el jugador vigilado.
 
 No hay una correspondencia pública verificada entre un `store_id` numérico Nexus y un UUID de organizador Riot. La migración debe pedir elección si no hay un vínculo seguro, en lugar de enlazar tiendas solo por su nombre.
+
+
+## Ampliación: código comunitario y otras webs (17 de octubre)
+
+Se contrastaron implementaciones de GitHub y el comportamiento de webs desplegadas. Las fuentes, commits y peticiones reproducibles están en:
+
+- [Implementaciones GitHub](community-github-events-2026-10.md): Riftfound, Joutes, Consort, un watcher de catálogo y un extractor de operaciones.
+- [Inspección en navegador](community-browser-events-2026-10.md): Riftfound y Riftbound.org.
+- [Otros servicios de eventos](community-sites-events-2026-10.md): BoundRift, RiftIndex y TCG2GO.
+
+Estos hallazgos afinan la implementación propuesta:
+
+1. **Operaciones persistidas:** Riftfound ya recupera el hash desde los bundles públicos cuando cambia; el extractor de Okay-U publica el catálogo. Centralizar este mecanismo y distinguir sus fallos de un torneo inexistente evita borrar watches por un cambio del frontend.
+2. **Tiendas:** Joutes resuelve organizador desde un enlace de evento, obtiene sus coordenadas y filtra los resultados por UUID de organizador. Es una referencia concreta para la selección inicial de tienda de `/mytable`.
+3. **Pairings:** Consort implementa el modelo y la presentación de mesa/rival/resultado. Su MatchStore refresca por acciones de interfaz y limita llamadas a 45 segundos; no es un watcher autónomo ni demuestra el uso del poller. El watcher de cafe-auvers compara eventos nuevos/cupos cada 15 minutos, sin seguir partidas.
+4. **Otro consumidor de resultados Play:** BoundRift expone un evento Play completado con 22 jugadores, cinco rondas, matches y standings. Sus IDs internos son distintos de los de Riot; conservar `externalUrl` permite vincular el origen. Su contrato normalizado no prueba por sí solo la semántica ni la frescura de todos los campos originales.
+5. **Frescura:** en el mismo evento, Riftfound tenía dos inscritos en una copia del 13 de octubre mientras Riot devolvía ocho con actualización del 16. El detalle directo de Riot sigue siendo la fuente recomendada para Watch. Los indicadores globales de actualización de un agregador no certifican cada torneo.
+6. **Retirada:** Riftbound.org presenta la desaparición del catálogo como posible cancelación o traslado. No convierte la ausencia en cancelación cierta. Aplicar esa distinción y conservar la última lectura válida cuando falla una fuente.
+
+Ningún proyecto revisado proporciona la migración completa lista para incorporar al bot. Las referencias reducen incertidumbre de listado, hashes, tienda y mapper, pero siguen pendientes las pruebas de Watch completo, 2v2/multifase y las señales explícitas de cancelación/conflicto/subtipo de empate. Un campo normalizado por un tercero no cierra esas pruebas sin un valor real y una correspondencia contrastada con Riot.
+
+Validación de esta ampliación documental: `npm run build` correcto y 35 archivos / 316 tests correctos. No se modificó la integración del bot; la suite actual no certifica la futura migración.

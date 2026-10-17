@@ -389,3 +389,12 @@ No se encontró en estas fuentes oficiales una señal pública que permita deriv
 Para `/mytable`, esta revisión documental no encontró un endpoint de búsqueda global por username. La investigación posterior del frontend Nexus demostró que ese servicio también requiere tienda y que el bot la omite. La ruta pública por organizador/día/roster de Riot sí devolvió mesa, rival y resultado en la prueba descrita arriba. No es necesario recurrir a una sesión Riot para ese lookup acotado. `PlayerTournaments` queda como alternativa autenticada del propio jugador, sin demostrar acceso a los torneos de un usuario arbitrario.
 
 El resultado negativo sobre cancelación y reportes queda acotado a las fuentes públicas comprobadas: no demuestra que Riot carezca de un endpoint autorizado para organizadores. Para cerrar la conservación literal de esas señales hace falta documentación o una fuente que las exponga de forma inequívoca; no basta con reinterpretar `TIE`, una fecha pasada o una lista vacía.
+
+
+## Contraste adicional: empate normalizado por BoundRift
+
+El 17 de octubre se comprobó el torneo Play `117095965990633192` en [BoundRift, ronda 5](https://boundrift.com/api/events/2120005716/matches?round_id=1200571605). En mesa 1, su match local `1500106387` tiene `isIntentionalDraw=true`, `gamesDrawn=1` y `status=COMPLETE`.
+
+La operación directa `GetCompeteTournamentForRiftboundPlayer` de Riot devuelve para mesa 1 el match `117451962559980400`, con `status=IN_PROGRESS`, ambos `teamOutcomes=TIE` y un juego con ambos resultados `TIE`. No incluye un campo de intencionalidad. La correspondencia por torneo/ronda/mesa permite contrastar el resultado, pero no demuestra que la etiqueta de BoundRift proceda de una señal oficial distinta: su lógica de transformación no se ha inspeccionado.
+
+Este hallazgo confirma un empate real y una presentación comunitaria más específica; no cierra la paridad del subtipo de empate ni autoriza a convertir todo `TIE` en empate intencional. Véase el [informe de sitios](community-sites-events-2026-10.md) para IDs locales, otros campos y límites de frescura.
