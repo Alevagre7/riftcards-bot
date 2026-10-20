@@ -166,7 +166,9 @@ const RoundSchema = z.object({
   status: z.string(),
   byeTeamIds: z.array(z.string().min(1)),
   matches: z.array(MatchSchema),
-  endOfRoundStandings: z.array(StandingSchema),
+  // Riot publishes null while a round has no standings yet. This must not
+  // prevent reading its live pairings. Missing/malformed fields still fail.
+  endOfRoundStandings: z.array(StandingSchema).nullable().transform((rows) => rows ?? []),
 }).passthrough();
 
 const SectionSchema = z.object({

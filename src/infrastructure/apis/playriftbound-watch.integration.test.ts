@@ -98,4 +98,58 @@ describe('Riot player selection, restart, and final notification', () => {
       rmSync(directory, { recursive: true, force: true });
     }
   });
+
+  it('notifies each live round before standings are published, rather than only the final round', async () => {
+    const fixture = JSON.parse(readFileSync(new URL('./__fixtures__/playriftbound-tournament.json', import.meta.url), 'utf8'));
+    const organizer = JSON.parse(readFileSync(new URL('./__fixtures__/playriftbound-organizer.json', import.meta.url), 'utf8'));
+    const tournament = fixture.data.competeTournaments[0];
+    const section = tournament.stages[0].sections[0];
+    const template = structuredClone(section.rounds[0]);
+    tournament.config.roundCount = 3;
+    organizer.data.organizerSummary.id = tournament.organizerId;
+    for (const participant of tournament.tournamentParticipants) participant.status = 'ACTIVE';
+    const playerId = template.matches[0].teams[0].players[0].id;
+    vi.stubGlobal('fetch', vi.fn(async (_url, options) => {
+      return Response.json(JSON.parse(options.body).operationName === 'OrganizerSummary' ? organizer : fixture);
+    }));
+    const api = new PlayRiftboundAdapter({ timeoutMs: 5000, retryAttempts: 1 });
+    const db = openDatabase(':memory:');
+    try {
+      const repository = new SqliteEventWatchRepository(db);
+      await repository.create({ telegramId: 7, eventId: `riot:${tournament.id}`,
+        eventName: tournament.name, eventUsername: 'Player 1#TEST', registrationId: playerId,
+        createdAt: '2026-10-18T08:02:02Z' });
+      const notify = vi.fn().mockResolvedValue(undefined);
+      const watcher = createEventWatcher({ watchRepository: repository, eventRepository: api,
+        defaultLocation: { latitude: 37.39, longitude: -5.99, numMiles: 50 },
+        notify, intervalMs: 30000, logger: () => {} });
+      section.rounds = [];
+      for (let number = 1; number <= 3; number++) {
+        for (const previous of section.rounds) {
+          previous.status = 'FINALIZED';
+          previous.endOfRoundStandings = [];
+        }
+        const current = structuredClone(template);
+        current.roundNumber = number;
+        current.status = 'IN_PROGRESS';
+        current.endOfRoundStandings = null; // Riot has not published standings yet.
+        current.matches[0].teamOutcomes = [];
+        for (const game of current.matches[0].games) game.teamOutcomes = [];
+        section.rounds.push(current);
+        await watcher.tick();
+        expect(notify, `live round ${number} must notify without standings`).toHaveBeenCalledTimes(number);
+        expect(notify.mock.calls[number - 1]![1].body).toContain(`Round ${number}`);
+        expect((await repository.get(7))?.consecutiveFailures).toBe(0);
+      }
+      section.rounds[2].status = 'FINALIZED';
+      section.rounds[2].endOfRoundStandings = template.endOfRoundStandings;
+      section.rounds[2].matches[0].teamOutcomes = template.matches[0].teamOutcomes;
+      await watcher.tick();
+      expect(notify).toHaveBeenCalledTimes(5);
+      expect(notify.mock.calls[3]![1].body).toContain('Round 3 result:');
+      expect(notify.mock.calls[4]![1].body).toContain('event is complete');
+      expect(await repository.get(7)).toBeNull();
+    } finally { db.close(); }
+  });
+
 });

@@ -280,6 +280,13 @@ describe('PlayRiftboundAdapter detail and tracking', () => {
     await expect(makeAdapter().getEventById(eventId, location)).rejects.toThrow('Invalid GetCompeteTournamentForRiftboundPlayer response');
   });
 
+  it.each([undefined, 'not-standings'])('still rejects missing or malformed standings: %s', async (value) => {
+    const tournament = loadFixture('playriftbound-tournament.json');
+    tournament.data.competeTournaments[0].stages[0].sections[0].rounds[0].endOfRoundStandings = value;
+    makeOfficialRouter(fetchSpy, tournament);
+    await expect(makeAdapter().getEventDetail(eventId, location)).rejects.toThrow('Invalid GetCompeteTournamentForRiftboundPlayer response');
+  });
+
   it('bypasses the short cache for fresh detail requests while coalescing identical fresh reads', async () => {
     makeOfficialRouter(fetchSpy);
     const adapter = makeAdapter();
